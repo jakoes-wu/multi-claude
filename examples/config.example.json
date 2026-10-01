@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "root": "~/.cc",
+  "bin_dir": "~/.local/bin",
+  "shared": {
+    "dir": "~/.claude-shared",
+    "items": ["agents", "commands", "skills", "CLAUDE.md"]
+  },
+  "defaults": {
+    "env": {"CLAUDE_CODE_PLUGIN_CACHE_DIR": "~/.claude-shared/plugins"},
+    "args": ["--settings", "~/.claude-shared/settings.plugins.json"]
+  },
+  "accounts": {
+    "main": {"identity": "default", "proxy": "inherit"},
+    "work": {"proxy": "http://127.0.0.1:7901", "shared": true, "args": ["--permission-mode", "acceptEdits"]},
+    "personal": {"proxy": "inherit", "shared": false, "env": {"MAX_THINKING_TOKENS": "8000"}},
+    "offline-proxy-test": {"proxy": "off"}
+  }
+}
