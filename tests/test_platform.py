@@ -33,6 +33,9 @@ class ClaudeProcessRuleTest(unittest.TestCase):
             (["node", "/usr/lib/node_modules/.bin/claude"], ""),
             (["/usr/bin/node", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"], ""),
             (["bun", "/x/claude"], ""),
+            # npm 安装的原生程序：Claude 拉起子进程时 argv[0] 是 process.execPath。
+            (["/p/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe", "daemon"], ""),
+            (["something"], "/p/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe"),
         ]
         for argv, exe in cases:
             with self.subTest(argv=argv, exe=exe):
@@ -44,6 +47,8 @@ class ClaudeProcessRuleTest(unittest.TestCase):
             (["python3", "/x/claude"], ""),
             (["claude-work"], ""),
             (["vim", "claude.md"], ""),
+            (["vim", "/p/node_modules/@anthropic-ai/claude-code/README.md"], "/usr/bin/vim"),
+            (["/x/other/claude.exe"], ""),
             ([], ""),
         ]
         for argv, exe in cases:

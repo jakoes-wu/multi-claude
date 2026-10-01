@@ -492,6 +492,7 @@ class ClaudeBusyCheckTest(MigrateBase):
             ("node", True),
             (os.path.join(self.tmp, "claude", "versions", "9.9.9"), True),
             ("claude bg-pty-host", True),
+            (os.path.join(self.tmp, "lib", "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe"), True),
             ("ssh", False),
         ]
         for argv0, busy in forms:
@@ -536,13 +537,17 @@ class ClaudeBusyCheckTest(MigrateBase):
         self.assertEqual(self.migrate().code, 0)
         self.assert_migrated()
 
-    @unittest.skipUnless(sys.platform == "darwin", "the LaunchAgent exists only on macOS")
     def test_daemon_service(self):
-        self.write(os.path.join(self.home, "Library", "LaunchAgents", "com.anthropic.claude-daemon.plist"))
+        # macOS 是 LaunchAgent；Linux 是 systemd user unit，位置随 XDG_CONFIG_HOME（基础环境里指向临时目录）。
+        if sys.platform == "darwin":
+            service = os.path.join(self.home, "Library", "LaunchAgents", "com.anthropic.claude-daemon.plist")
+        else:
+            service = os.path.join(self.env["XDG_CONFIG_HOME"], "systemd", "user", "com.anthropic.claude-daemon.service")
+        self.write(service)
         before = self.snapshot(self.source)
         result = self.migrate()
         self.assertEqual(result.code, 4, result)
-        self.assertIn("usage=daemon-service", result.err)
+        self.assertIn("usage=daemon-service path=" + service, result.err)
         self.assertIn("claude daemon uninstall", result.err)
         self.assertEqual(before, self.snapshot(self.source))
 
