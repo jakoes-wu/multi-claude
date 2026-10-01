@@ -448,8 +448,7 @@ class ClaudeBusyCheckTest(MigrateBase):
                                  "import time\nwhile True:\n    time.sleep(1)\n")
         self.other_home = os.path.join(self.tmp, "other-home")
         os.makedirs(self.other_home)
-        # macOS 上 /usr/bin/python3 是 xcrun 跳转程序，会再次 exec 并丢掉 `exec -a` 设的名字。
-        self.python = os.path.realpath(sys.executable)
+        self.python = _real_interpreter()
 
     def spawn(self, argv0, env=None, args=None):
         """以 argv[0]=argv0 启动一个常驻进程（默认运行伪 claude 脚本）。"""
@@ -460,6 +459,11 @@ class ClaudeBusyCheckTest(MigrateBase):
                                   env=full_env, cwd=self.tmp)
         self.addCleanup(_stop, holder)
         time.sleep(0.4)
+        # 伪装失败时（解释器又 exec 了一次，argv[0] 被换掉）后面的断言会莫名其妙，这里先说清楚。
+        shown = subprocess.run(["ps", "-o", "command=", "-p", str(holder.pid)], stdout=subprocess.PIPE,
+                               universal_newlines=True).stdout.strip()
+        self.assertTrue(shown.startswith(argv0), "argv[0] was not kept: {!r} (interpreter {})".format(
+            shown, self.python))
         return holder
 
     def assert_busy(self, holder, usage):
@@ -565,6 +569,19 @@ class ClaudeBusyCheckTest(MigrateBase):
         self.assertEqual(self.migrate("--dry-run", env={"MULTI_CLAUDE_TEST_PROC1_COMM": "systemd\n"}).code, 0)
         hook_off = {"MULTI_CLAUDE_TEST_PROC1_COMM": "bwrap\n", "MULTI_CLAUDE_TEST_MODE": None}
         self.assertEqual(self.migrate("--dry-run", env=hook_off).code, 0)
+
+
+def _real_interpreter():
+    """能保住 `exec -a` 所设 argv[0] 的 Python 解释器。
+
+    macOS 上 /usr/bin/python3 是 xcrun 跳转程序；python.org 与 setup-python 的 framework 版本里，
+    bin/python3.x 也只是跳板，会再 exec 到 Python.app 里的真实解释器。两者都会把 argv[0] 换掉，
+    所以优先用 framework 内的真实解释器。
+    """
+    framework_python = os.path.join(sys.base_prefix, "Resources", "Python.app", "Contents", "MacOS", "Python")
+    if sys.platform == "darwin" and os.path.isfile(framework_python):
+        return framework_python
+    return os.path.realpath(sys.executable)
 
 
 def _quote(value):
