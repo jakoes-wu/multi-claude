@@ -86,6 +86,7 @@ multi-claude list
 | `multi-claude which [DIR]` | Show which account `claude-auto` would use in `DIR` (default: the current directory). |
 | `multi-claude rename OLD NEW` | Rename an account and its launcher. The directory and the login stay. |
 | `multi-claude mcp NAME [ARG ...]` | Run `claude mcp ARG ...` as that account. |
+| `multi-claude statusline install\|uninstall FILE` | Wrap the statusLine command in a settings file so that `usage` gets fresh numbers, or restore it. |
 | `multi-claude completion bash\|zsh\|fish` | Print a shell completion script. |
 
 Every write command accepts `--dry-run`. `env`, `args`, `proxy` and `usage NAME` return 1 for an account that is not registered.
@@ -146,6 +147,18 @@ home   -          -        no data (start claude-home once)
 ```
 
 The numbers are the last values Claude Code itself cached in the account's `.claude.json` (for the default identity, `~/.claude.json`). multi-claude never reads credentials and never calls the network, so the data can be old: `UPDATED` shows its age, and values older than an hour are marked `stale`. Claude Code writes this cache itself; when it refreshes it is not documented. A window whose reset time has passed shows `reset`.
+
+For fresher numbers, let your status line record them. Claude Code passes the 5-hour and 7-day usage to the `statusLine` command each time it redraws the status line (Pro and Max plans, after the first response of a session). Wrap the `statusLine` command of the settings file that is actually in effect:
+
+```sh
+multi-claude statusline install ~/.claude/settings.json
+```
+
+The command becomes `<path of multi-claude> statusline-hook '<original command>'`. The hook saves the usage of the account it runs under (recognised by `CLAUDE_CONFIG_DIR`) in `~/.config/multi-claude/usage/` and then runs the original command with `/bin/sh -c`, so the status line looks and behaves the same. Only the percentages and reset times are saved, never the rest of the status-line data. `usage` then shows whichever is newer, the cache or the status line, and marks the latter `(statusline)`; `--json` has a `source` field.
+
+- Only a file with an existing `"type": "command"` status line can be wrapped; the file is backed up next to itself (`*.multi-claude-bak.*`) before every change, and only `statusLine.command` changes. A symlinked file is changed at its target.
+- If several settings files define `statusLine`, wrap the one that wins (for example a file passed with `--settings` in the launcher arguments).
+- Run `multi-claude statusline uninstall FILE` before uninstalling multi-claude; otherwise the status line stays empty because the wrapped command cannot be found. Running `install` again after multi-claude moves updates the path.
 
 ### Choosing an account by directory
 
@@ -296,7 +309,7 @@ If you already linked an account to the shared directory by hand, `multi-claude 
 ./install.sh --uninstall
 ```
 
-This removes the tool only. Your configuration, account directories, logins and `claude-<name>` launchers stay; the launchers keep working because they do not depend on multi-claude.
+This removes the tool only. Your configuration, account directories, logins and `claude-<name>` launchers stay; the launchers keep working because they do not depend on multi-claude. Run `multi-claude statusline uninstall FILE` first if you wrapped a status line.
 
 ## Contributing
 

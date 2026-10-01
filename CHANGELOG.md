@@ -26,6 +26,11 @@ All notable changes to this project are documented here. The format follows
 - `mcp NAME [ARG ...]`: run `claude mcp` with the account's environment
   (configuration directory, proxy, extra variables) but without its fixed
   arguments.
+- `statusline install|uninstall FILE`: wrap an existing `statusLine` command
+  so that each redraw records the account's 5-hour and 7-day usage from the
+  status-line data; the original command still produces the output. `usage`
+  and `list --json` use whichever is newer, the cache or the status line, and
+  report it in a new `source` field.
 
 ### Changed
 

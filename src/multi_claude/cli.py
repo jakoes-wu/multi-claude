@@ -13,7 +13,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
-from . import __version__, accounts, completion, doctor, identity, migrate, platform, routes, usage
+from . import __version__, accounts, completion, doctor, identity, migrate, platform, routes, statusline, usage
 from .actions import error, info, warn
 from .config import (DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError, RouteRule,
                      load_config, normalize_proxy, parse_config, validate_env_key, validate_name, validate_route_path,
@@ -140,6 +140,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_completion = sub.add_parser("completion", help="print a shell completion script")
     p_completion.add_argument("shell", choices=completion.SHELLS)
+
+    # 钩子 statusline-hook 不是子命令：它在 main 里先于 argparse 被拦下，不出现在帮助与补全中。
+    p_statusline = sub.add_parser("statusline", help="record usage from Claude's status line: wrap (install) or "
+                                                     "restore (uninstall) the statusLine command in a settings FILE")
+    p_statusline.add_argument("action", choices=("install", "uninstall"))
+    p_statusline.add_argument("file", metavar="FILE")
+    _add_dry_run(p_statusline)
     return parser
 
 
@@ -184,6 +191,12 @@ def _split_args_command(argv: List[str]) -> Tuple[List[str], Optional[List[str]]
 
 def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == [statusline.HOOK_COMMAND]:
+        # 状态栏每次刷新都会执行钩子：跳过参数解析、平台检查与迁移记录读取，尽快把进程交给原命令。
+        if len(argv) != 2:
+            error("usage: multi-claude {} COMMAND".format(statusline.HOOK_COMMAND))
+            return accounts.EXIT_USAGE
+        return statusline.run_hook(argv[1])
     try:
         argv, launch_args = _split_args_command(argv)
     except UsageError as exc:
@@ -220,6 +233,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             return cmd_usage(args.name, args.json)
         if args.command == "which":
             return cmd_which(args.path)
+        if args.command == "statusline":
+            # 只改用户指定的设置文件，不碰 config.json 与账号目录，所以不加写锁、迁移未完成时也放行。
+            return cmd_statusline(args.action, args.file, args.dry_run)
         if args.command == "mcp":
             if notice:
                 # 迁移进行到一半时账号目录可能正在搬动，claude 写进去的内容可能落在半迁移的目录里。
@@ -679,8 +695,7 @@ def _account_entries(config: Config, with_usage: bool = False) -> List[dict]:
             "credentials_file": identity.credentials_file(directory),
         }
         if with_usage:
-            report = usage.read_usage(usage.global_state_path(account.identity, directory), now)
-            entry["usage"] = usage.report_to_dict(report, now)
+            entry["usage"] = usage.report_to_dict(usage.read_account_usage(config, account, now), now)
         entries.append(entry)
     return entries
 
@@ -723,8 +738,7 @@ def cmd_usage(name: Optional[str], as_json: bool) -> int:
     now = datetime.now(timezone.utc)
     reports = []
     for account in selected:
-        directory = accounts.account_dir(config, account.name)
-        reports.append((account.name, usage.read_usage(usage.global_state_path(account.identity, directory), now)))
+        reports.append((account.name, usage.read_account_usage(config, account, now)))
     if as_json:
         data = {"schema_version": 1, "configured": exists,
                 "accounts": [{"name": account_name, "usage": usage.report_to_dict(report, now)}
@@ -742,7 +756,7 @@ def cmd_usage(name: Optional[str], as_json: bool) -> int:
     widths = [max(len(row[index]) for row in rows) for index in range(len(rows[0]))]
     for row in rows:
         print("  ".join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip())
-    print("Values come from Claude Code's own cache (.claude.json) and may be out of date; "
+    print("Values come from Claude Code's own cache (.claude.json) or the statusline hook, and may be out of date; "
           "multi-claude never reads credentials.")
     return accounts.EXIT_OK
 
@@ -768,7 +782,9 @@ def _updated_cell(name: str, report: usage.UsageReport, now: datetime) -> str:
     if report.status == usage.STATUS_OTHER_ACCOUNT:
         return "cache belongs to an earlier login"
     age = _format_age(now - report.fetched_at)
-    return age + (" (stale)" if report.status == usage.STATUS_STALE else "")
+    if report.status == usage.STATUS_STALE:
+        age += " (stale)"
+    return age + (" (statusline)" if report.source == usage.SOURCE_STATUSLINE else "")
 
 
 def _format_age(delta) -> str:
@@ -778,6 +794,34 @@ def _format_age(delta) -> str:
     if minutes < 48 * 60:
         return "{}h ago".format(minutes // 60)
     return "{}d ago".format(minutes // (24 * 60))
+
+
+def cmd_statusline(action: str, path: str, dry_run: bool) -> int:
+    """包装或还原设置文件中的 statusLine 命令。文件不合法时退出 1 且不改动；其它写入错误由 main 统一处理。"""
+    try:
+        if action == "install":
+            # 包装命令里写的是绝对路径：Claude 执行 statusLine 时的 PATH 不一定含 multi-claude 所在目录。
+            executable = shutil.which(statusline.EXECUTABLE)
+            if executable is None:
+                error("{} is not on PATH; the wrapped statusLine needs its full path".format(statusline.EXECUTABLE),
+                      phase="statusline")
+                return accounts.EXIT_ERROR
+            result = statusline.install(path, executable, dry_run=dry_run)
+        else:
+            result = statusline.uninstall(path, dry_run=dry_run)
+    except statusline.StatuslineError as exc:
+        error(str(exc), phase="statusline")
+        return accounts.EXIT_ERROR
+    changed = result.state in (statusline.WRAPPED, statusline.REWRAPPED, statusline.RESTORED)
+    if dry_run and changed:
+        info("statusline: would be {} {}".format(result.state, result.target))
+    else:
+        info("statusline: {} {}".format(result.state, result.target))
+    if result.backup:
+        info("backup: {}".format(result.backup))
+    if changed:
+        info("command: {}".format(result.command))
+    return accounts.EXIT_OK
 
 
 def cmd_doctor(as_json: bool, verbose: bool) -> int:

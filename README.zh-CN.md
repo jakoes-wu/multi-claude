@@ -86,6 +86,7 @@ multi-claude list
 | `multi-claude which [目录]` | 显示 `claude-auto` 在该目录（默认当前目录）会用哪个账号 |
 | `multi-claude rename 旧名 新名` | 给账号及其启动命令改名，目录与登录不变 |
 | `multi-claude mcp 名称 [参数 ...]` | 以该账号的身份运行 `claude mcp 参数 ...` |
+| `multi-claude statusline install\|uninstall 文件` | 包装设置文件里的 statusLine 命令，让 `usage` 拿到更新的数值；或还原它 |
 | `multi-claude completion bash\|zsh\|fish` | 输出 shell 补全脚本 |
 
 所有写命令都支持 `--dry-run`。`env`、`args`、`proxy` 和 `usage 名称` 对未登记的账号返回 1。
@@ -146,6 +147,18 @@ home   -          -        no data (start claude-home once)
 ```
 
 数值是 Claude Code 自己缓存在该账号 `.claude.json`（default 身份为 `~/.claude.json`）里的最近一次结果。multi-claude 不读凭据、不联网，所以数据可能已经过时：`UPDATED` 显示数据年龄，超过一小时标注 `stale`。这份缓存由 Claude Code 自己写入，何时刷新未见官方说明。已过重置时间的窗口显示 `reset`。
+
+想要更新的数值，可以让状态栏顺带记录。Claude Code 每次重绘状态栏时，会把 5 小时与 7 天用量交给 `statusLine` 命令（仅 Pro / Max，且会话收到第一次回复之后才有）。包装实际生效的那份设置文件里的 `statusLine` 命令：
+
+```sh
+multi-claude statusline install ~/.claude/settings.json
+```
+
+命令会变成 `<multi-claude 路径> statusline-hook '<原命令>'`。钩子按 `CLAUDE_CONFIG_DIR` 认出当前账号，把用量存进 `~/.config/multi-claude/usage/`，再用 `/bin/sh -c` 执行原命令，状态栏的显示与行为不变。只保存百分比与重置时间，状态栏数据里的其它内容不落盘。之后 `usage` 取缓存与状态栏两者中较新的一份，后者标注 `(statusline)`；`--json` 有 `source` 字段。
+
+- 只能包装已有 `"type": "command"` 状态栏的文件；每次改动前在同目录备份（`*.multi-claude-bak.*`），只改 `statusLine.command`。文件是软链时改它指向的文件。
+- 多个设置文件都定义了 `statusLine` 时，包装生效的那份（例如启动命令固定参数里用 `--settings` 传入的文件）。
+- 卸载 multi-claude 前先运行 `multi-claude statusline uninstall 文件`，否则包装命令找不到可执行文件，状态栏会变空。multi-claude 换了位置后再运行一次 `install` 即可更新路径。
 
 ### 按目录选账号
 
@@ -296,7 +309,7 @@ multi-claude add work --shared
 ./install.sh --uninstall
 ```
 
-只删除工具本身。配置、账号目录、登录和 `claude-<名称>` 启动命令都会保留；启动命令不依赖 multi-claude，可以继续使用。
+只删除工具本身。配置、账号目录、登录和 `claude-<名称>` 启动命令都会保留；启动命令不依赖 multi-claude，可以继续使用。包装过状态栏的，先运行 `multi-claude statusline uninstall 文件`。
 
 ## 参与贡献
 
