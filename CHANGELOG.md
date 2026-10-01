@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-09-30
 
 First release (macOS and Linux).
 
@@ -32,6 +32,12 @@ First release (macOS and Linux).
 - Optional shared resources linked from one directory into selected accounts,
   including `--adopt` for links made by hand.
 - `install.sh` with `--config`, `--prefix` and `--uninstall`.
+
+### Fixed (before release)
+
+- The busy check recognizes processes started by the npm-installed native
+  program (`.../@anthropic-ai/claude-code/bin/claude.exe`) and the Linux
+  systemd user service of the background supervisor.
 
 [Unreleased]: https://github.com/jakoes-wu/multi-claude/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/jakoes-wu/multi-claude/releases/tag/v0.1.0
