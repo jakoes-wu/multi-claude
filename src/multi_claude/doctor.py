@@ -11,7 +11,7 @@ import shutil
 import stat
 from typing import List, NamedTuple, Optional, Tuple
 
-from . import accounts, identity, launcher, migrate
+from . import accounts, identity, launcher, migrate, routes
 from .config import IDENTITY_DEFAULT, Account, Config, ConfigError, load_config
 from .fsutil import expand
 
@@ -40,6 +40,36 @@ def run_checks() -> List[Check]:
     checks.append(_check_bin_on_path(config))
     for account in config.accounts.values():
         checks.extend(_check_account(config, account))
+    checks.extend(_check_routes(config))
+    return checks
+
+
+def _check_routes(config: Config) -> List[Check]:
+    """路由启用时检查 claude-auto 与每条规则（方案 feature-directory-routing §5.1.6）。"""
+    if not config.routes_enabled:
+        return []
+    checks: List[Check] = []
+    status = routes.router_status(config)
+    path = routes.router_path(config.bin_dir)
+    if status == "ok":
+        checks.append(Check("router", LEVEL_OK, routes.ROUTER_NAME, path))
+    else:
+        hint = {"missing": "is missing", "stale": "is out of date",
+                "conflict": "is taken by a file multi-claude does not manage"}[status]
+        checks.append(Check("router", LEVEL_ERROR, routes.ROUTER_NAME,
+                            "{} {}; run `multi-claude apply`".format(path, hint)))
+    for rule in config.route_rules:
+        if config.find(rule.account) is None:
+            checks.append(Check("route-account", LEVEL_ERROR, rule.path,
+                                "uses account {!r}, which is not registered; run `multi-claude route {} --remove` "
+                                "or register the account".format(rule.account, rule.path)))
+        if not os.path.isdir(expand(rule.path)):
+            checks.append(Check("route-path", LEVEL_WARN, rule.path,
+                                "the directory does not exist, so this route is ignored"))
+    if config.route_default is not None and config.find(config.route_default) is None:
+        checks.append(Check("route-account", LEVEL_ERROR, "(default)",
+                            "uses account {!r}, which is not registered; run `multi-claude route --no-default` "
+                            "or register the account".format(config.route_default)))
     return checks
 
 

@@ -12,10 +12,26 @@ from typing import Dict, List, NamedTuple
 
 SHELLS = ("bash", "zsh", "fish")
 
-# 第一个位置参数是账号名的子命令。
-NAME_COMMANDS = ("migrate-default", "add", "proxy", "env", "args", "remove", "usage")
+# 各子命令第 N 个位置参数的候选类型：name 账号名、dir 目录、shell 补全的 shell 名、proxy 代理固定值。
+POSITIONAL_KINDS = {
+    "migrate-default": ["name"], "add": ["name"], "proxy": ["name", "proxy"], "env": ["name"],
+    "args": ["name"], "remove": ["name"], "usage": ["name"], "completion": ["shell"],
+    "route": ["dir", "name"], "which": ["dir"],
+}
 # 选项值是路径、应按文件补全的选项。
 PATH_OPTIONS = ("-f", "--file", "--root", "--bin-dir", "--shared-dir")
+# 选项值是账号名的选项。
+NAME_OPTIONS = ("--default",)
+FIXED_WORDS = {"shell": SHELLS, "proxy": ("off", "inherit")}
+
+
+def _positional_cases(indent: str) -> str:
+    """生成 `case "$cmd:$npos" in` 的分支，按候选类型合并。"""
+    by_kind: Dict[str, List[str]] = {}
+    for command, kinds in sorted(POSITIONAL_KINDS.items()):
+        for index, kind in enumerate(kinds):
+            by_kind.setdefault(kind, []).append("{}:{}".format(command, index))
+    return "\n".join("{}{}) kind={} ;;".format(indent, "|".join(keys), kind) for kind, keys in sorted(by_kind.items()))
 
 
 class CommandSpec(NamedTuple):
@@ -91,10 +107,11 @@ _multi_claude() {
     fi
     ((npos++))
   done
-  local candidates=""
+  local candidates="" kind=""
   if ((skip)); then
     case "$prev" in
       %(path_options)s) COMPREPLY=($(compgen -f -- "$cur")); return 0 ;;
+      %(name_options)s) kind=name ;;
       *) COMPREPLY=(); return 0 ;;
     esac
   elif [[ -z "$cmd" ]]; then
@@ -103,13 +120,17 @@ _multi_claude() {
     COMPREPLY=(); return 0
   elif [[ "$cur" == -* ]]; then
     candidates="$opts"
-  elif [[ "$cmd" == "completion" && $npos -eq 0 ]]; then
-    candidates="%(shells)s"
-  elif [[ " %(name_commands)s " == *" $cmd "* && $npos -eq 0 ]]; then
-    candidates="$(multi-claude list --names 2>/dev/null)"
-  elif [[ "$cmd" == "proxy" && $npos -eq 1 ]]; then
-    candidates="off inherit"
+  else
+    case "$cmd:$npos" in
+%(positional_cases)s
+    esac
   fi
+  case "$kind" in
+    name) candidates="$(multi-claude list --names 2>/dev/null)" ;;
+    dir) COMPREPLY=($(compgen -d -- "$cur")); return 0 ;;
+    shell) candidates="%(shells)s" ;;
+    proxy) candidates="off inherit" ;;
+  esac
   COMPREPLY=($(compgen -W "$candidates" -- "$cur"))
   # bash 只替换当前词最后一个分词字符之后的片段，候选要去掉同样长的前缀。
   local j prefix=""
@@ -122,7 +143,8 @@ _multi_claude() {
 }
 complete -F _multi_claude multi-claude
 """ % {"option_cases": option_cases, "commands": _words(commands), "shells": _words(list(SHELLS)),
-       "name_commands": _words(list(NAME_COMMANDS)), "path_options": "|".join(PATH_OPTIONS)}
+       "positional_cases": _positional_cases("      "), "path_options": "|".join(PATH_OPTIONS),
+       "name_options": "|".join(NAME_OPTIONS)}
 
 
 def _zsh(specs: Dict[str, CommandSpec]) -> str:
@@ -154,10 +176,11 @@ _multi_claude() {
     fi
     ((npos++))
   done
-  local cur="${words[CURRENT]}"
+  local cur="${words[CURRENT]}" kind=""
   if ((skip)); then
     case "$prev" in
       %(path_options)s) _files; return ;;
+      %(name_options)s) kind=name ;;
       *) return ;;
     esac
   elif [[ -z "$cmd" ]]; then
@@ -166,18 +189,23 @@ _multi_claude() {
     return
   elif [[ "$cur" == -* ]]; then
     candidates=($opts)
-  elif [[ "$cmd" == "completion" && $npos -eq 0 ]]; then
-    candidates=(%(shells)s)
-  elif [[ " %(name_commands)s " == *" $cmd "* && $npos -eq 0 ]]; then
-    candidates=(${(f)"$(multi-claude list --names 2>/dev/null)"})
-  elif [[ "$cmd" == "proxy" && $npos -eq 1 ]]; then
-    candidates=(off inherit)
+  else
+    case "$cmd:$npos" in
+%(positional_cases)s
+    esac
   fi
+  case "$kind" in
+    name) candidates=(${(f)"$(multi-claude list --names 2>/dev/null)"}) ;;
+    dir) _files -/; return ;;
+    shell) candidates=(%(shells)s) ;;
+    proxy) candidates=(off inherit) ;;
+  esac
   compadd -- $candidates
 }
 compdef _multi_claude multi-claude
 """ % {"option_cases": option_cases, "commands": _words(commands), "shells": _words(list(SHELLS)),
-       "name_commands": _words(list(NAME_COMMANDS)), "path_options": "|".join(PATH_OPTIONS)}
+       "positional_cases": _positional_cases("      "), "path_options": "|".join(PATH_OPTIONS),
+       "name_options": "|".join(NAME_OPTIONS)}
 
 
 def _fish(specs: Dict[str, CommandSpec]) -> str:
@@ -228,16 +256,18 @@ def _fish(specs: Dict[str, CommandSpec]) -> str:
             flag = "-l {}".format(option[2:]) if option.startswith("--") else "-s {}".format(option[1:])
             requires = " -r" if option in spec.value_options else ""
             files = " -F" if option in PATH_OPTIONS else ""
-            lines.append("complete -c multi-claude -n {} {}{}{}".format(
-                shlex.quote(condition), flag, requires, files))
+            names = " -a '(multi-claude list --names 2>/dev/null)'" if option in NAME_OPTIONS else ""
+            lines.append("complete -c multi-claude -n {} {}{}{}{}".format(
+                shlex.quote(condition), flag, requires, files, names))
         vopts = _words(spec.value_options)
-        if name in NAME_COMMANDS:
-            lines.append("complete -c multi-claude -n {} -a '(multi-claude list --names 2>/dev/null)'".format(
-                shlex.quote("{}; and test (__multi_claude_positionals {}) -eq 0".format(condition, vopts))))
-        if name == "completion":
-            lines.append("complete -c multi-claude -n {} -a {}".format(
-                shlex.quote(condition), shlex.quote(_words(list(SHELLS)))))
-        if name == "proxy":
-            lines.append("complete -c multi-claude -n {} -a 'off inherit'".format(
-                shlex.quote("{}; and test (__multi_claude_positionals {}) -eq 1".format(condition, vopts))))
+        for index, kind in enumerate(POSITIONAL_KINDS.get(name, [])):
+            at_position = shlex.quote("{}; and test (__multi_claude_positionals {}) -eq {}".format(
+                condition, vopts, index))
+            if kind == "name":
+                source = "'(multi-claude list --names 2>/dev/null)'"
+            elif kind == "dir":
+                source = "'(__fish_complete_directories)'"
+            else:
+                source = shlex.quote(_words(list(FIXED_WORDS[kind])))
+            lines.append("complete -c multi-claude -n {} -a {}".format(at_position, source))
     return "\n".join(lines) + "\n"

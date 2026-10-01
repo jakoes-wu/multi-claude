@@ -82,6 +82,8 @@ multi-claude list
 | `multi-claude list [--verbose \| --json \| --names]` | 列出账号、启动命令和登录状态；`--json` 额外包含用量，供脚本使用；`--names` 只输出名称 |
 | `multi-claude usage [名称] [--json]` | 显示各账号最近一次已知的 5 小时 / 7 天用量 |
 | `multi-claude doctor [--json] [--verbose]` | 检查配置、启动命令、账号目录、共享软链、登录与环境变量 |
+| `multi-claude route 目录 名称`、`route 目录 --remove`、`route --default 名称`、`route --no-default` | 为 `claude-auto` 设置按目录选账号的规则 |
+| `multi-claude which [目录]` | 显示 `claude-auto` 在该目录（默认当前目录）会用哪个账号 |
 | `multi-claude completion bash\|zsh\|fish` | 输出 shell 补全脚本 |
 
 所有写命令都支持 `--dry-run`。`env`、`args`、`proxy` 和 `usage 名称` 对未登记的账号返回 1。
@@ -143,6 +145,22 @@ home   -          -        no data (start claude-home once)
 
 数值是 Claude Code 自己缓存在该账号 `.claude.json`（default 身份为 `~/.claude.json`）里的最近一次结果。multi-claude 不读凭据、不联网，所以数据可能已经过时：`UPDATED` 显示数据年龄，超过一小时标注 `stale`。这份缓存由 Claude Code 自己写入，何时刷新未见官方说明。已过重置时间的窗口显示 `reset`。
 
+### 按目录选账号
+
+```sh
+multi-claude route ~/work work           # ~/work 下的任何目录都用 claude-work
+multi-claude route ~/work/client-a ca    # 多条规则命中时取最长的目录
+multi-claude route --default main        # 可选：没有规则命中时使用
+claude-auto                              # 用当前目录对应的账号启动 Claude Code
+multi-claude which                       # 只显示会选哪个账号，不启动
+```
+
+规则存在 `config.json` 里，并生成 `~/.local/bin/claude-auto`。比较的是物理路径（软链会被解析），所以 `~/work` 不会匹配 `~/workshop`；规则目录不存在时该规则被忽略。没有规则命中、也没设默认账号时，`claude-auto` 直接运行 `claude`。参数原样传递：`claude-auto -p "hello"`。
+
+由于 `claude-auto` 本身是一个启动命令名，有规则时不能有名为 `auto` 的账号；账号仍被规则引用时也不能删除（都判为冲突，退出码 3）。`claude-auto` 不改动你的 shell 配置；想让裸 `claude` 也按规则选账号，可以自己加 `alias claude=claude-auto`。
+
+降级到不支持路由的版本时，配置仍能读取，但下一次写命令会丢掉 `routes`，`claude-auto` 也会留在原处；降级前请先删除规则（或手工删除 `claude-auto`）。
+
 ### 诊断与补全
 
 `multi-claude doctor` 只读检查：配置与未完成的迁移；`claude` 和启动命令目录是否在 `PATH` 中；每个启动命令是否最新、有没有被同名文件遮住；账号目录是否存在、权限是否为 `0700`；默认账号的软链；断开的共享软链；是否有登录；以及 `ANTHROPIC_API_KEY` 这类会覆盖账号登录的变量。每个问题都附修复命令。有错误时退出码为 1；`--json` 输出供脚本使用。
@@ -179,7 +197,7 @@ multi-claude apply -f accounts.json
 
 `apply -f` 用文件内容替换整个配置。文件中没有的账号会被注销（目录保留）。只要有冲突，就什么都不写。
 
-`identity` 是工具内部状态，只能由 `migrate-default` 改变。已登记账号在文件里写的 `identity` 一律忽略。尚未登记、但写了 `"identity": "default"` 的账号会被跳过并给出提示：请在那台机器上运行 `multi-claude migrate-default <名称>`，再重新设置它的代理、环境变量、参数和共享。
+`identity` 是工具内部状态，只能由 `migrate-default` 改变。已登记账号在文件里写的 `identity` 一律忽略。尚未登记、但写了 `"identity": "default"` 的账号会被跳过并给出提示：请在那台机器上运行 `multi-claude migrate-default <名称>`，再重新设置它的代理、环境变量、参数和共享。引用该账号的路由（含默认账号）也会一并跳过并逐条提示，之后用 `multi-claude route` 重新设置。
 
 ## 迁移 `~/.claude`
 

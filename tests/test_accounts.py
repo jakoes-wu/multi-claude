@@ -221,7 +221,8 @@ class ListOutputTest(CliTestCase):
 
     def test_unconfigured_and_names(self):
         self.assertEqual(json.loads(self.ok("list", "--json").out),
-                         {"schema_version": 1, "configured": False, "accounts": []})
+                         {"schema_version": 1, "configured": False, "accounts": [],
+                          "routes": {"default": None, "rules": []}})
         self.assertEqual(self.ok("list", "--names").out, "")
         self.ok("add", "b@x.com")
         self.ok("add", "a")
