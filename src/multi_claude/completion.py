@@ -12,17 +12,19 @@ from typing import Dict, List, NamedTuple
 
 SHELLS = ("bash", "zsh", "fish")
 
-# 各子命令第 N 个位置参数的候选类型：name 账号名、dir 目录、shell 补全的 shell 名、proxy 代理固定值。
+# 各子命令第 N 个位置参数的候选类型：name 账号名、dir 目录、file 文件、shell 补全的 shell 名、
+# proxy 代理固定值、statusline 该子命令的动作。
 POSITIONAL_KINDS = {
     "migrate-default": ["name"], "add": ["name"], "proxy": ["name", "proxy"], "env": ["name"],
     "args": ["name"], "remove": ["name"], "usage": ["name"], "completion": ["shell"],
     "route": ["dir", "name"], "which": ["dir"], "rename": ["name"], "mcp": ["name"],
+    "statusline": ["statusline", "file"],
 }
 # 选项值是路径、应按文件补全的选项。
 PATH_OPTIONS = ("-f", "--file", "--root", "--bin-dir", "--shared-dir")
 # 选项值是账号名的选项。
 NAME_OPTIONS = ("--default",)
-FIXED_WORDS = {"shell": SHELLS, "proxy": ("off", "inherit")}
+FIXED_WORDS = {"shell": SHELLS, "proxy": ("off", "inherit"), "statusline": ("install", "uninstall")}
 
 
 def _positional_cases(indent: str) -> str:
@@ -128,8 +130,10 @@ _multi_claude() {
   case "$kind" in
     name) candidates="$(multi-claude list --names 2>/dev/null)" ;;
     dir) COMPREPLY=($(compgen -d -- "$cur")); return 0 ;;
+    file) COMPREPLY=($(compgen -f -- "$cur")); return 0 ;;
     shell) candidates="%(shells)s" ;;
     proxy) candidates="off inherit" ;;
+    statusline) candidates="install uninstall" ;;
   esac
   COMPREPLY=($(compgen -W "$candidates" -- "$cur"))
   # bash 只替换当前词最后一个分词字符之后的片段，候选要去掉同样长的前缀。
@@ -197,8 +201,10 @@ _multi_claude() {
   case "$kind" in
     name) candidates=(${(f)"$(multi-claude list --names 2>/dev/null)"}) ;;
     dir) _files -/; return ;;
+    file) _files; return ;;
     shell) candidates=(%(shells)s) ;;
     proxy) candidates=(off inherit) ;;
+    statusline) candidates=(install uninstall) ;;
   esac
   compadd -- $candidates
 }
@@ -267,6 +273,8 @@ def _fish(specs: Dict[str, CommandSpec]) -> str:
                 source = "'(multi-claude list --names 2>/dev/null)'"
             elif kind == "dir":
                 source = "'(__fish_complete_directories)'"
+            elif kind == "file":
+                source = "'(__fish_complete_path)'"
             else:
                 source = shlex.quote(_words(list(FIXED_WORDS[kind])))
             lines.append("complete -c multi-claude -n {} -a {}".format(at_position, source))

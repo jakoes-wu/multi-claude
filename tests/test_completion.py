@@ -9,7 +9,7 @@ import unittest
 from helpers import CliTestCase
 
 SUBCOMMANDS = ("init", "migrate-default", "add", "proxy", "env", "args", "remove", "apply", "list",
-               "usage", "doctor", "route", "which", "rename", "mcp", "completion")
+               "usage", "doctor", "route", "which", "rename", "mcp", "completion", "statusline")
 
 
 class CompletionTest(CliTestCase):
@@ -23,6 +23,9 @@ class CompletionTest(CliTestCase):
                 for command in SUBCOMMANDS:
                     self.assertIn(command, text)
                 self.assertIn("multi-claude list --names", text)
+                self.assertIn("install uninstall", text)
+                # 钩子是内部入口，不应出现在补全候选里。
+                self.assertNotIn("statusline-hook", text)
 
     def test_syntax(self):
         checks = {"bash": ["bash", "-n"], "zsh": ["zsh", "-n"], "fish": ["fish", "--no-execute"]}
@@ -79,6 +82,14 @@ class CompletionTest(CliTestCase):
         self.assertEqual(self.bash_complete("multi-claude remove "), ["a@example.com"])
         self.assertEqual(self.bash_complete("multi-claude rename "), ["a@example.com"])
         self.assertEqual(self.bash_complete("multi-claude mcp "), ["a@example.com"])
+
+    @unittest.skipUnless(shutil.which("bash"), "bash is not installed")
+    def test_bash_statusline(self):
+        self.write(os.path.join(self.tmp, "settings-one.json"), "{}")
+        self.assertEqual(self.bash_complete("multi-claude statusline "), ["install", "uninstall"])
+        self.assertEqual(self.bash_complete("multi-claude statusline u"), ["uninstall"])
+        prefix = os.path.join(self.tmp, "settings-")
+        self.assertEqual(self.bash_complete("multi-claude statusline install " + prefix), [prefix + "one.json"])
 
     def test_completion_ignores_broken_state(self):
         self.write(os.path.join(self.state, "migrate-journal.json"), "{broken")
