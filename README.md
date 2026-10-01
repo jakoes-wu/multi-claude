@@ -171,7 +171,7 @@ The default account is made of three parts that Claude Code finds only when `CLA
 - a Claude Code process running under your home directory, including background sessions (the error lists a `claude daemon stop --any` command for each configuration directory);
 - a process whose `CLAUDE_CONFIG_DIR` points to `~/.claude`;
 - a live IDE extension lock in `~/.claude/ide/`;
-- the installed background service: on macOS `~/Library/LaunchAgents/com.anthropic.claude-daemon.plist`, on Linux `~/.config/systemd/user/com.anthropic.claude-daemon.service` (run `claude daemon uninstall` first and install it again afterwards);
+- the installed background service: on macOS `~/Library/LaunchAgents/com.anthropic.claude-daemon.plist`, on Linux `${XDG_CONFIG_HOME:-~/.config}/systemd/user/com.anthropic.claude-daemon.service` (run `claude daemon uninstall` first and install it again afterwards);
 - `CLAUDE_CODE_CHILD_SESSION` in its own environment, which means it runs inside a Claude Code session. If you are sure it does not (the variable can leak through screen, tmux or programs started by Claude Code), use `env -u CLAUDE_CODE_CHILD_SESSION multi-claude ...`.
 
 Quit the Claude desktop app as well. On macOS, Apple's own programs (for example the system shells) hide their environment from other processes, so a shell that exports `CLAUDE_CONFIG_DIR` cannot be detected; the migration prints how many processes could not be checked. `--skip-process-check` skips all these checks at your own risk. It does not skip one precheck: if `CLAUDE_CONFIG_DIR` in the shell running multi-claude points to `~/.claude`, run `unset CLAUDE_CONFIG_DIR` first.
