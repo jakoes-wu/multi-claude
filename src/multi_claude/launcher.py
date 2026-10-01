@@ -23,6 +23,11 @@ ACCOUNT_DIR_PREFIX = "account_dir="
 
 _NO_PROXY_HOSTS = "localhost,127.0.0.1,::1"
 
+# 在 shell 里导出后，会让通过任何启动命令启动的账号都改用这一份凭据（官方 env-vars 页的凭据变量），
+# 账号各自的登录就被绕过了，所以启动命令一律清除。`env` 命令本来就拒绝这些键，不会再被设回来。
+AUTH_OVERRIDE_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
+                     "CLAUDE_CODE_OAUTH_REFRESH_TOKEN")
+
 # claude --help（2.1.286）中取可变个值的选项：会吞掉后面所有不以 `-` 开头的参数。
 VARIADIC_OPTIONS = frozenset(["--add-dir", "--allowedTools", "--allowed-tools", "--betas", "--disallowedTools",
                               "--disallowed-tools", "--file", "--mcp-config", "--tools"])
@@ -63,6 +68,7 @@ def render(name: str, identity: str, account_dir: str, default_dir: str, proxy: 
         "fi",
     ]
     lines.extend(_identity_lines(identity, default_dir))
+    lines.append("unset " + " ".join(AUTH_OVERRIDE_ENV))
     for key in sorted(env):
         lines.append("{}={}; export {}".format(key, shlex.quote(expand_value(env[key])), key))
     lines.extend(_proxy_lines(proxy))

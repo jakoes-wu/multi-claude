@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `usage`: the last known 5-hour and 7-day usage of each account, read from
+  Claude Code's own cache in `.claude.json`, with the data's age. Never reads
+  credentials or calls the network.
+- `doctor`: read-only checks of the configuration, unfinished migrations,
+  `PATH`, launchers, account directories, shared links, logins and
+  login-overriding variables, with a fix for each problem; `--json` output.
+- `completion bash|zsh|fish`.
+- `list --json` (includes usage) and `list --names`.
+
+### Changed
+
+- Launchers unset `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+  `CLAUDE_CODE_OAUTH_TOKEN` and `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`, so a
+  credential exported in the shell no longer replaces every account's login.
+  Run `multi-claude apply` after upgrading to regenerate existing launchers.
+
 ## [0.1.0] - 2026-09-30
 
 First release (macOS and Linux).

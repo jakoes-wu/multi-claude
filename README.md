@@ -79,9 +79,12 @@ multi-claude list
 | `multi-claude args (NAME \| --defaults) -- [ARG ...]` | Replace the fixed arguments; `--` with nothing after it clears them. |
 | `multi-claude remove NAME` | Unregister an account and delete its launcher. **The directory and the login are kept.** |
 | `multi-claude apply [-f FILE]` | Converge everything to the configuration (or to `FILE`). |
-| `multi-claude list [--verbose]` | Show accounts, launchers and login state. |
+| `multi-claude list [--verbose \| --json \| --names]` | Show accounts, launchers and login state. `--json` adds usage and is meant for scripts; `--names` prints only the names. |
+| `multi-claude usage [NAME] [--json]` | Show the last known 5-hour and 7-day usage of each account. |
+| `multi-claude doctor [--json] [--verbose]` | Check the configuration, launchers, account directories, shared links, logins and environment. |
+| `multi-claude completion bash\|zsh\|fish` | Print a shell completion script. |
 
-Every write command accepts `--dry-run`. `env`, `args` and `proxy` return 1 for an account that is not registered.
+Every write command accepts `--dry-run`. `env`, `args`, `proxy` and `usage NAME` return 1 for an account that is not registered.
 
 ### Default locations
 
@@ -124,6 +127,31 @@ multi-claude env work MAX_THINKING_TOKENS=8000 --unset OLD_VAR
 - A value that is exactly `~` or starts with `~/` is expanded to an absolute path. Other values are written literally (no `$` expansion). `--settings=~/x` is **not** expanded; write `--settings ~/x` instead.
 - Variables that decide which login is used (`CLAUDE_CONFIG_DIR`, `CLAUDE_SECURESTORAGE_CONFIG_DIR`, `CLAUDE_CODE_CUSTOM_OAUTH_URL`, `HOME`, `USER`), the proxy variables (use `proxy`), and credentials (API keys, tokens, secrets, passwords) are rejected. Put credentials in the account's `settings.json` `env` block or use `apiKeyHelper`.
 - `args` needs an explicit `--`. Options that take several values, such as `--allowedTools` or `--add-dir`, swallow every following argument that does not start with `-`. If one of them is the last option in the fixed arguments, it would eat the prompt you pass to the launcher; multi-claude warns about this. Put another option after it (as `--settings` above).
+- Launchers always unset `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` and `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`: exported in a shell, any of them makes every account use that one credential instead of its own login. Running `claude` directly is not affected.
+
+### Usage
+
+```sh
+multi-claude usage
+```
+
+```text
+NAME   5H         7D       UPDATED
+work   23% 14:00  41% Fri  12m ago
+home   -          -        no data (start claude-home once)
+```
+
+The numbers are the last values Claude Code itself cached in the account's `.claude.json` (for the default identity, `~/.claude.json`). multi-claude never reads credentials and never calls the network, so the data can be old: `UPDATED` shows its age, and values older than an hour are marked `stale`. Claude Code writes this cache itself; when it refreshes it is not documented. A window whose reset time has passed shows `reset`.
+
+### Diagnostics and completion
+
+`multi-claude doctor` checks, without changing anything: the configuration and any unfinished migration, whether `claude` and the launcher directory are on `PATH`, whether each launcher is up to date and not hidden by another file of the same name, whether each account directory exists and is private (`0700`), the default account's link, broken shared links, whether a login exists, and variables such as `ANTHROPIC_API_KEY` that override the accounts' logins. Every problem comes with the command that fixes it. It exits with 1 when there is an error; `--json` prints the results for scripts.
+
+```sh
+multi-claude completion bash > ~/.local/share/bash-completion/completions/multi-claude
+multi-claude completion zsh > "${fpath[1]}/_multi-claude"   # or any directory on your fpath
+multi-claude completion fish > ~/.config/fish/completions/multi-claude.fish
+```
 
 ### Declarative setup with `apply`
 

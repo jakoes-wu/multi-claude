@@ -163,6 +163,87 @@ class LauncherTest(CliTestCase):
             self.assertEqual(proc.returncode, 0, proc.stdout)
 
 
+class AuthOverrideTest(CliTestCase):
+    """v0.2 §8 第 4 条：启动命令清除会让所有账号共用一份凭据的环境变量。"""
+
+    AUTH = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_REFRESH_TOKEN")
+
+    def test_cleared_for_dir_and_default_identity(self):
+        self.ok("add", "work")
+        self.ok("env", "work", "MAX_THINKING_TOKENS=8000")
+        parent = {name: "leaked" for name in self.AUTH}
+        _, _, env, _ = self.run_launcher("work", env=parent)
+        self.assertFalse(set(self.AUTH) & set(env), env)
+        self.assertEqual(env["MAX_THINKING_TOKENS"], "8000")
+        os.makedirs(os.path.join(self.home, ".claude"))
+        self.ok("migrate-default", "main")
+        code, _, env, _ = self.run_launcher("main", env=parent)
+        self.assertEqual(code, 0)
+        self.assertFalse(set(self.AUTH) & set(env), env)
+
+    def test_upgrade_from_old_template(self):
+        self.ok("add", "work")
+        path = os.path.join(self.bin, "claude-work")
+        with open(path) as handle:
+            old = "".join(line for line in handle.read().splitlines(True) if not line.startswith("unset ANTHROPIC_"))
+        self.write(path, old, 0o755)
+        self.assertRegex(self.ok("list").out, r"work\s+dir\s+ok\s+inherit\s+no\s+stale")
+        result = self.ok("apply")
+        self.assertIn("update launcher", result.out)
+        self.assertNotIn("login-bound", result.err)
+        self.assertRegex(self.ok("list").out, r"work\s+dir\s+ok\s+inherit\s+no\s+ok")
+
+    def test_warning_text(self):
+        self.ok("add", "work")
+        err = self.ok("list", env={"ANTHROPIC_API_KEY": "secret-value", "ANTHROPIC_PROFILE": "p"}).err
+        self.assertIn("ANTHROPIC_API_KEY is set in the environment; launchers clear it", err)
+        self.assertIn("ANTHROPIC_PROFILE is set in the environment; every account", err)
+        self.assertNotIn("secret-value", err)
+
+
+class ListOutputTest(CliTestCase):
+    """v0.2 §8 第 5 条：list --json 与 --names。"""
+
+    def test_json(self):
+        self.ok("add", "work", "--proxy", "7901")
+        data = json.loads(self.ok("list", "--json").out)
+        self.assertEqual(data["schema_version"], 1)
+        self.assertTrue(data["configured"])
+        entry = data["accounts"][0]
+        self.assertEqual(entry["name"], "work")
+        self.assertEqual(entry["dir"], os.path.join(self.root, "work"))
+        self.assertEqual(entry["proxy"], "http://127.0.0.1:7901")
+        self.assertIs(entry["shared"], False)
+        self.assertEqual(entry["launcher"], "ok")
+        self.assertIsNone(entry["link"])
+        self.assertTrue(entry["keychain_service"].startswith("Claude Code-credentials-"))
+        self.assertEqual(entry["usage"]["status"], "no-data")
+
+    def test_unconfigured_and_names(self):
+        self.assertEqual(json.loads(self.ok("list", "--json").out),
+                         {"schema_version": 1, "configured": False, "accounts": []})
+        self.assertEqual(self.ok("list", "--names").out, "")
+        self.ok("add", "b@x.com")
+        self.ok("add", "a")
+        self.assertEqual(self.ok("list", "--names").out, "b@x.com\na\n")
+        self.assertEqual(self.run_cli("list", "--json", "--names").code, 2)
+
+    def test_read_only_commands_during_migration(self):
+        self.ok("add", "work")
+        self.write(os.path.join(self.state, "migrate-journal.json"), json.dumps(
+            {"name": "main", "source": "/x", "target": "/y", "backup": "/z", "mode": "rename", "phase": "planned"}))
+        self.ok("usage")
+        self.ok("list", "--json")
+        self.ok("completion", "bash")
+        self.assertEqual(self.run_cli("doctor").code, 1)
+        self.write(os.path.join(self.state, "migrate-journal.json"), "{broken")
+        self.assertEqual(self.run_cli("list", "--json").code, 1)
+        self.assertEqual(self.run_cli("usage").code, 1)
+        result = self.run_cli("doctor", "--json")
+        self.assertEqual(result.code, 1)
+        json.loads(result.out)
+
+
 class EnvArgsTest(CliTestCase):
     """§8 第 8 条：额外环境变量与固定参数。"""
 
