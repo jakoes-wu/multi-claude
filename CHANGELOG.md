@@ -31,6 +31,11 @@ All notable changes to this project are documented here. The format follows
   status-line data; the original command still produces the output. `usage`
   and `list --json` use whichever is newer, the cache or the status line, and
   report it in a new `source` field.
+- `handoff TARGET [--from NAME] [--session ID] [--force]`: copy a session
+  (its `.jsonl` and the folder next to it) to the same project of another
+  account and print `cd … && claude-<target> --resume <id>`. Inside a
+  Claude session it takes the current session; a different copy already in
+  the target is refused (exit 3) unless `--force` backs it up first.
 
 ### Changed
 

@@ -18,12 +18,12 @@ POSITIONAL_KINDS = {
     "migrate-default": ["name"], "add": ["name"], "proxy": ["name", "proxy"], "env": ["name"],
     "args": ["name"], "remove": ["name"], "usage": ["name"], "completion": ["shell"],
     "route": ["dir", "name"], "which": ["dir"], "rename": ["name"], "mcp": ["name"],
-    "statusline": ["statusline", "file"],
+    "statusline": ["statusline", "file"], "handoff": ["name"],
 }
 # 选项值是路径、应按文件补全的选项。
 PATH_OPTIONS = ("-f", "--file", "--root", "--bin-dir", "--shared-dir")
 # 选项值是账号名的选项。
-NAME_OPTIONS = ("--default",)
+NAME_OPTIONS = ("--default", "--from")
 FIXED_WORDS = {"shell": SHELLS, "proxy": ("off", "inherit"), "statusline": ("install", "uninstall")}
 
 

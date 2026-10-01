@@ -9,7 +9,7 @@ import unittest
 from helpers import CliTestCase
 
 SUBCOMMANDS = ("init", "migrate-default", "add", "proxy", "env", "args", "remove", "apply", "list",
-               "usage", "doctor", "route", "which", "rename", "mcp", "completion", "statusline")
+               "usage", "doctor", "route", "which", "rename", "mcp", "completion", "statusline", "handoff")
 
 
 class CompletionTest(CliTestCase):
@@ -82,6 +82,8 @@ class CompletionTest(CliTestCase):
         self.assertEqual(self.bash_complete("multi-claude remove "), ["a@example.com"])
         self.assertEqual(self.bash_complete("multi-claude rename "), ["a@example.com"])
         self.assertEqual(self.bash_complete("multi-claude mcp "), ["a@example.com"])
+        self.assertEqual(self.bash_complete("multi-claude handoff "), ["a@example.com"])
+        self.assertEqual(self.bash_complete("multi-claude handoff x --from "), ["a@example.com"])
 
     @unittest.skipUnless(shutil.which("bash"), "bash is not installed")
     def test_bash_statusline(self):
