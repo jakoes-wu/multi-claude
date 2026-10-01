@@ -33,6 +33,9 @@ def plan_shared(new: Config, account: Account, account_dir: str,
                            "shared.dir is not configured; run `multi-claude init --shared-dir DIR`")]
         shared_root = expand(new.shared_dir)
         for item in new.shared_items:
+            if item in account.shared_exclude:
+                # 不进 desired：本工具建过的这项链接会走下面“该项关闭共享”的删除分支，用户自建的不动。
+                continue
             source = os.path.join(shared_root, item)
             if entry_kind(source) == KIND_MISSING:
                 actions.append(Action(SKIP, "shared-link", os.path.join(account_dir, item),

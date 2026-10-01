@@ -73,7 +73,7 @@ multi-claude list
 | ---- | ---- |
 | `multi-claude init [--root DIR] [--bin-dir DIR] [--shared-dir DIR] [--shared-items A,B]` | 创建或修改全局设置 |
 | `multi-claude migrate-default 名称 [--copy] [--keep-backup] [--proxy P] [--skip-process-check]` | 把 `~/.claude` 变成一个账号 |
-| `multi-claude add 名称 [--proxy P] [--shared \| --no-shared] [--adopt]` | 新增账号、登记已有目录或修改其选项 |
+| `multi-claude add 名称 [--proxy P] [--shared \| --no-shared] [--adopt] [--shared-exclude 项] [--shared-include 项]` | 新增账号、登记已有目录或修改其选项；`--shared-exclude` 让这个账号不共享某一项，`--shared-include` 撤销 |
 | `multi-claude proxy 名称 端口\|URL\|off\|inherit` | 设置账号代理 |
 | `multi-claude env (名称 \| --defaults) [K=V ...] [--unset K ...]` | 设置或删除额外环境变量 |
 | `multi-claude args (名称 \| --defaults) -- [参数 ...]` | 整体替换固定参数；`--` 后面为空表示清空 |
@@ -290,6 +290,17 @@ multi-claude add work --shared
 默认条目为 `agents`、`commands`、`skills`、`CLAUDE.md`，只链接 `shared.items` 中列出的条目。multi-claude 只创建缺少的软链，并记住哪些是它建的。关闭共享时只删除这些软链，你自己建的软链保持不动。软链位置上已有真实文件或目录时判为冲突，绝不覆盖。
 
 如果之前已经手工把账号链接到了共享目录，`multi-claude add 名称 --shared --adopt` 会接管这些软链，不重建。
+
+想让某个账号单独不共享某一项（例如用它自己的 `skills`）：
+
+```sh
+multi-claude add work --shared-exclude skills    # 删除 multi-claude 建立的 skills 软链
+multi-claude add work --shared-include skills    # 重新链接
+```
+
+其它项照常共享，共享目录不受影响；你自己在那个位置放的目录或软链不会被动。`list` 显示 `yes (not: skills)`。用 `apply -f` 时，文件里没写 `shared_exclude` 的账号会恢复共享全部项。
+
+保存账号自身状态的条目不能共享：`.credentials.json`、`.claude.json`、`settings.local.json`、`projects`、`history.jsonl`、`file-history`、`sessions`、`session-env`、`shell-snapshots`、`todos`（不区分大小写）。`shared.items` 里出现其中任何一项，配置都会被拒绝。
 
 **`skills/synced/`。** Claude Code 把从 claude.ai 同步来的技能存放在 `skills/synced/` 下，按组织和账号分桶。账号的 `skills` 是真实目录时，开启共享判为冲突，multi-claude 不移动任何内容。你可以自己把该账号的 `skills/synced/<桶>` 移进共享目录的 `skills/synced/`：不同账号的桶名不同，不会互相覆盖；但此后这个账号同步下来的技能也会写进共享目录。
 
