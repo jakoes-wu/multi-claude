@@ -1,6 +1,6 @@
 # multi-claude：Claude Code 多账号管理工具
 
-> 2026-09-30 注记：方案已收敛，用户已同意编码；编码与本机、Linux 测试机回归已完成，独立代码评审结论为可合并（阻塞/高/中为 0），尚未提交。编码中实测补充一条事实（§3 依据 9：macOS 上读不出 Apple 自带程序的环境），已同步到 §5.1.7 第 3 条与 §8 第 12 条。§10 中 npm 形态、Linux supervisor 服务形态与代理实测三项仍未验证（Linux 测试机没有 node 与 claude）。仓库新建，§4 所有条目都是新增。用户决定：启动命令命名 `claude-<名称>`；启动命令不清除 `CLAUDE_CODE_CHILD_SESSION`。
+> 2026-09-30 注记：方案已收敛，用户已同意编码；编码与本机、Linux 测试机回归已完成，独立代码评审结论为可合并（阻塞/高/中为 0），尚未提交。编码中实测补充一条事实（§3 依据 9：macOS 上读不出 Apple 自带程序的环境），已同步到 §5.1.7 第 3 条与 §8 第 12 条。合并后在 Linux 测试机上补做 §10 三项实机验证：代理实测通过；npm 形态与 Linux 服务形态暴露两个缺口（npm 原生程序拉起的子进程、Linux systemd 服务未检测），已在 bugfix 分支修复，见依据 11、14 与 §5.1.7 第 2、5 条。仓库新建，§4 所有条目都是新增。用户决定：启动命令命名 `claude-<名称>`；启动命令不清除 `CLAUDE_CODE_CHILD_SESSION`。
 >
 > - 第 1 轮独立评审：无高级问题，中级 8 条（D1–D8）、低级 9 条（D9–D17），本版已全部修订。主要修订：占用检查改为拦同一 `HOME` 下的全部 Claude 进程（D1）；写明 settings 的 `env` 覆盖启动命令的代理并告警（D2）；扩充保留键、拒绝凭据类键（D3）；`args` 在 argparse 前手工切分 `--`（D4）；占用检查排除自身、识别调用方 shell、Linux PID 命名空间判为检查失败（D5、D6）；测试安全闸同时断言假 `claude`（D7）；daemon 的停止命令与 LaunchAgent 检测（D8）；沙箱问题按源码关闭（D9）。D6 原建议读 `/proc/1/ns/pid`，Linux 测试机实测普通用户读不了。
 > - 第 2 轮复审：D1–D17 中 16 条确认修复；新发现中级 3 条（D18–D20）、低级 7 条（D21–D27），本版已全部修订。D18：第 1 轮改用的 `NSpid` 在 `bwrap --proc /proc` 中只有一个值（Linux 测试机实测确认），检测不到嵌套；改为“本工具环境含 `CLAUDE_CODE_CHILD_SESSION` 即拒绝”（第 0 条）加“`/proc/1/comm` 为 `bwrap` 即检查失败”。D19：凭据键改为显式清单加按下划线分段匹配，放行 `MAX_THINKING_TOKENS` 等。D20：预检直接检查本工具自身环境中的 `CLAUDE_CONFIG_DIR`。
@@ -71,10 +71,10 @@ Claude Code 通过环境变量 `CLAUDE_CONFIG_DIR` 决定配置目录，未设�
 8. **可变参数选项**：`claude --help`（2.1.286）中取可变个值的选项：`--add-dir`、`--allowedTools`/`--allowed-tools`、`--betas`、`--disallowedTools`/`--disallowed-tools`、`--file`、`--mcp-config`、`--tools`。它们会吞掉后面所有不以 `-` 开头的参数。
 9. **进程与配置目录**：实测 4 个运行中的 claude 进程，`lsof` 查到它们在账号目录下打开的文件数为 0；但用 `ps -E -ww -p <pid>` 能读到各自的 `CLAUDE_CONFIG_DIR`。所以按路径查占用会漏掉正在运行的 claude，必须读进程环境（§5.1.7）。编码阶段（macOS 27.0.1）实测补充：`sysctl(KERN_PROCARGS2)` 与 `ps -E` 对 Apple 自带程序（`/bin/zsh`、`/bin/sleep` 等）只返回 argv、隐去全部环境变量；对第三方程序（claude、python、node）能读到完整环境。
 10. **IDE 扩展**：VS Code 扩展把锁文件写在 `~/.claude/ide/<端口>.lock`，内容含 `pid`、`ideName`、`authToken` 等字段。源码 `Udn()` 显示：即使会话设置了 `CLAUDE_CONFIG_DIR`，也会额外读 `~/.claude/ide`。
-11. **其它**：`claude` 本体（`~/.local/bin/claude`）是指向 `~/.local/share/claude/versions/<版本>` 的软链；从终端启动的进程 argv[0] 为 `claude`。Claude 自己拉起的子进程不一定如此：源码 `rke()` 在 `pinToCurrentBinary` 时直接用 `process.execPath`（原生安装即版本文件 `.../claude/versions/<版本>`）；后台会话的终端宿主进程（`Etr()`）以 `--bg-pty-host` 参数启动，并显式设置 `argv0:"claude bg-pty-host"`；Bun 子进程默认把可执行文件路径当作 argv[0]。官方 agent-view 页说明 `claude daemon stop --any --keep-workers` 会让这些后台会话在 supervisor 停掉后继续运行。shell 别名不会在脚本里展开。
+11. **其它**：`claude` 本体（`~/.local/bin/claude`）是指向 `~/.local/share/claude/versions/<版本>` 的软链；从终端启动的进程 argv[0] 为 `claude`。Claude 自己拉起的子进程不一定如此：源码 `rke()` 在 `pinToCurrentBinary` 时直接用 `process.execPath`（原生安装即版本文件 `.../claude/versions/<版本>`）；后台会话的终端宿主进程（`Etr()`）以 `--bg-pty-host` 参数启动，并显式设置 `argv0:"claude bg-pty-host"`；Bun 子进程默认把可执行文件路径当作 argv[0]。npm 安装形态（2.1.286 Linux 实测，`npm i -g` 装进临时目录）：包内放的是原生程序 `node_modules/@anthropic-ai/claude-code/bin/claude.exe`（Bun 独立可执行文件，源码 `Nd()` 即 `Bun.isStandaloneExecutable`），`<prefix>/bin/claude` 是指向它的软链；终端启动时 argv=`["claude"]`、`/proc/<pid>/exe` 为该 `claude.exe`；它拉起子进程时 `process.execPath` 就是这个 `claude.exe`（源码 `XAe()`：`Nd()` 为真时 `cmd:process.execPath`）。子进程的 argv[0] 来自源码而非运行时复现：按需拉起 supervisor 需要登录后创建后台会话，测试机上未登录，未复现。官方 agent-view 页说明 `claude daemon stop --any --keep-workers` 会让这些后台会话在 supervisor 停掉后继续运行。shell 别名不会在脚本里展开。
 12. **所有账号都会写 `$HOME/.claude`**：以下路径直接由 `homedir()` 拼出，与 `CLAUDE_CONFIG_DIR` 无关：`~/.claude/bridge-spawn`（源码 `DVn="bridge-spawn"`，会 mkdir）、`~/.claude/.device-keys.json`、`~/.claude/state/` 下的 `settings-review.json` 等（沙箱构建代码 `Nr=Qe(Tc(),".claude","state")` 与 `we()/state` 分别处理），以及依据 10 的 `~/.claude/ide`。所以**任何账号**的 Claude 进程都可能在迁移期间写 `~/.claude`。
 13. **settings 中的 `env` 覆盖 shell 环境**：官方 env-vars 页原文 “When the same variable is set in both your shell and a settings file `env` block, the settings file value applies in most sessions.” 源码（检索 `appliedGlobalConfigEnv`）依次把 `.claude.json` 的 `env`、各级 settings（含 `--settings` 指定的文件）的 `env`、托管设置的 `env` 写入 `process.env`。
-14. **后台 supervisor**：官方 agent-view 页原文 “If you set `CLAUDE_CONFIG_DIR`, the supervisor uses that directory instead of `~/.claude` and runs as a separate instance with its own sessions.” 停止命令为 `claude daemon stop --any`（按需启动的实例），已安装成系统服务的实例用 `claude daemon stop`。macOS 上安装形态是 LaunchAgent `~/Library/LaunchAgents/com.anthropic.claude-daemon.plist`（源码 `be="com.anthropic.claude-daemon"`），只带 `PATH` 环境变量，因此总是服务默认账号。
+14. **后台 supervisor**：官方 agent-view 页原文 “If you set `CLAUDE_CONFIG_DIR`, the supervisor uses that directory instead of `~/.claude` and runs as a separate instance with its own sessions.” 停止命令为 `claude daemon stop --any`（按需启动的实例），已安装成系统服务的实例用 `claude daemon stop`。macOS 上安装形态是 LaunchAgent `~/Library/LaunchAgents/com.anthropic.claude-daemon.plist`（源码 `be="com.anthropic.claude-daemon"`），只带 `PATH` 环境变量，因此总是服务默认账号。Linux 上（2.1.286 Linux 构建源码，检索 `systemd","user"`）是 systemd user unit `${XDG_CONFIG_HOME:-~/.config}/systemd/user/com.anthropic.claude-daemon.service`：`ExecStart` 不设 `CLAUDE_CONFIG_DIR`、`Environment` 只带 `PATH`，`Restart=always`，安装时 `systemctl --user enable --now`；同样总是服务默认账号。2.1.286 的 `claude daemon --help` 写明 “Service install is disabled in this version — the daemon runs on demand”，但保留 `uninstall`：旧版本装下的服务文件仍可能存在，所以仍要检测。
 15. **沙箱写保护与软链**：源码 `NE(e)` 返回 `[realpath(e), e]`，沙箱禁止写入列表同时包含真实路径与字面路径，迁移后 `~/.claude` 变成软链不削弱该保护。
 16. **嵌套会话**：官方 env-vars 页说明继承了 `CLAUDE_CODE_CHILD_SESSION` 的交互式会话不进入 `--resume`、历史与 `claude agents`。从某个 Claude 会话的 Bash 工具里运行启动命令即属此情形。
 
@@ -318,14 +318,14 @@ multi-claude env --defaults CLAUDE_CODE_PLUGIN_CACHE_DIR=~/.claude-shared/plugin
 
    满足任一条即视为 Claude 进程（依据 11）：
    - argv[0] 的文件名（`os.path.basename`）等于 `claude`，或以 `claude ` 开头（后台终端宿主进程的 `claude bg-pty-host`）；
-   - argv[0] 或可执行文件路径（macOS 取 `KERN_PROCARGS2` 开头的 exec_path，Linux 取 `/proc/<pid>/exe`）含 `/claude/versions/`；
+   - argv[0] 或可执行文件路径（macOS 取 `KERN_PROCARGS2` 开头的 exec_path，Linux 取 `/proc/<pid>/exe`）含 `/claude/versions/`（官方安装）或 `/@anthropic-ai/claude-code/`（npm 安装，依据 11）；
    - argv 中出现 `--bg-pty-host`；
-   - argv[0] 的文件名为 `node` 或 `bun`，且 argv[1] 的文件名等于 `claude` 或 argv[1] 路径含 `@anthropic-ai/claude-code`（npm 形态，见 §7）。
+   - argv[0] 的文件名为 `node` 或 `bun`，且 argv[1] 的文件名等于 `claude` 或 argv[1] 路径含 `@anthropic-ai/claude-code`（旧版 npm 包以 JS 入口运行的形态）。
 
    不单看 argv[1]，以免把 `ssh claude` 之类的进程误判进来。它环境中 `HOME` 的 realpath 等于 H（没有 `HOME` 时按等于处理）就判占用，`usage=claude-process`，`path` 显示它的配置目录（`CLAUDE_CONFIG_DIR` 或 `<HOME>/.claude`）。按 `HOME` 而不是按配置目录比较，是因为依据 12 的写入只取决于 `HOME`；同时这也让测试的临时 HOME 不会把真实机器上的 claude 进程算进来。
 3. **继承了配置目录的其它进程**：任何同 uid 进程（不限 Claude 进程）的环境中 `CLAUDE_CONFIG_DIR` 非空且 realpath 等于 R，判占用，`usage=config-dir`（Claude 会话派生的 shell 会继承这个变量）。macOS 上 Apple 自带程序的环境读不出（依据 9 补充），所以系统自带 shell 里导出的该变量看不到；这类进程计入“读不出环境”的汇总提示。第 2 条不受影响：Claude 进程是第三方程序，环境可读；万一读不出、但 argv 能认出是 Claude 进程，按占用处理。本工具自身及其子进程（lsof、ps）不参与判断。命中的是本工具的父进程时，单独提示“当前 shell 导出了 `CLAUDE_CONFIG_DIR=<值>`，请先 `unset CLAUDE_CONFIG_DIR`”。
 4. **IDE 扩展**：读 `S/ide/*.lock`，只解析 JSON 的 `pid` 与 `ideName` 两个字段（不读取、不输出 `authToken`），pid 存活即判占用，`usage=ide-lock`。文件不是合法 JSON 时跳过并警告。
-5. **后台 supervisor**：运行中的 supervisor 是 Claude 进程，由第 2 条覆盖。supervisor 按配置目录各一个实例（依据 14），报错时对第 2 条命中的每个进程按它的配置目录给出停止命令：配置目录为 `<HOME>/.claude`（未设变量）时写 `env -u CLAUDE_CONFIG_DIR claude daemon stop --any`，否则写 `CLAUDE_CONFIG_DIR=<目录> claude daemon stop --any`（按需启动的实例需要 `--any`；不指定变量会停掉当前 shell 所指账号的实例）。macOS 上存在 `~/Library/LaunchAgents/com.anthropic.claude-daemon.plist` 时，不论进程是否在运行都判占用（`usage=daemon-service`）：该服务会被 launchd 拉起并写 S；提示先运行 `claude daemon uninstall`，迁移完成后可再安装。Linux 上的服务安装形态（是否为 systemd user 服务、单元名）本次提取的是 macOS 构建，未核实；一期 Linux 只靠第 2 条拦运行中的进程，§10 记录待核。
+5. **后台 supervisor**：运行中的 supervisor 是 Claude 进程，由第 2 条覆盖。supervisor 按配置目录各一个实例（依据 14），报错时对第 2 条命中的每个进程按它的配置目录给出停止命令：配置目录为 `<HOME>/.claude`（未设变量）时写 `env -u CLAUDE_CONFIG_DIR claude daemon stop --any`，否则写 `CLAUDE_CONFIG_DIR=<目录> claude daemon stop --any`（按需启动的实例需要 `--any`；不指定变量会停掉当前 shell 所指账号的实例）。已安装系统服务时，不论进程是否在运行都判占用（`usage=daemon-service`）：macOS 查 `~/Library/LaunchAgents/com.anthropic.claude-daemon.plist`，Linux 查 `${XDG_CONFIG_HOME:-~/.config}/systemd/user/com.anthropic.claude-daemon.service`（依据 14，按本工具自身环境推算位置）；该服务会被 launchd / systemd 拉起并写 S；提示先运行 `claude daemon uninstall`，迁移完成后可再安装。
 
 输出格式沿用 multi-codex：每个进程一行 `pid=… command=… usage=… path=…`。
 
@@ -452,7 +452,7 @@ macOS 的查询命令固定为 `security find-generic-password -a <keychain_acco
 **部署形态**
 
 - Linux 上凭据随目录走，§5.1.8 的冲突规则偏保守（Linux 上搬目录不会丢登录），一期不区分平台，统一按冲突处理。
-- 只装了 npm 版 Claude 时，按 shebang（`#!/usr/bin/env node`）的执行机制，进程 argv[0] 为 `node`、argv[1] 为 `.../bin/claude`，可被 §5.1.7 第 2 条的 argv[1] 规则覆盖——这是推断，开发机没有 npm 版，未实测；编码阶段在 Linux 测试机上用 `npm i -g --prefix <临时目录>` 装一份、用临时 HOME 启动后验证一次（不登录）。
+- 只装了 npm 版 Claude 时：当前 npm 包是原生程序 `claude.exe`（依据 11，Linux 测试机实测），终端启动的进程由 argv[0]=`claude` 识别，Claude 拉起的子进程由路径含 `/@anthropic-ai/claude-code/` 识别；旧版以 `node .../bin/claude` 运行的形态由 node/bun 规则识别。Linux 测试机上用临时 HOME 启动 npm 版、运行 `migrate-default --dry-run` 实测返回 4、`usage=claude-process`。
 - 在 Claude 会话中运行 `migrate-default`（含开启了 env scrub、子进程处在 bwrap PID 命名空间中的情形）：被第 0 条拒绝；第 0 条未命中而 PID 1 为 `bwrap` 时判为检查失败（§5.1.7）。
 
 **对外语义**：§3 依据 9、12 证明 multi-codex 的路径占用检查对 Claude 不充分，本方案用第 2–5 条补齐；第 3 条对“任何带该 `CLAUDE_CONFIG_DIR` 的进程”判占用，会把用户手工 `export` 了该变量的终端也算进去——这是有意的保守行为，报错信息说明原因。
@@ -507,12 +507,12 @@ macOS 的查询命令固定为 `security find-generic-password -a <keychain_acco
     - 伪 Claude 进程 `HOME` 为测试临时 HOME、`CLAUDE_CONFIG_DIR` 为另一个目录：返回 4，`usage=claude-process`（依据 12 的场景）；
     - 伪 Claude 进程 `HOME` 为另一个临时目录：不算占用；
     - 伪进程的构造：写一个循环 sleep 的 Python 脚本，路径为 `<临时目录>/x/claude`，用 `bash -c 'exec -a <名字> <sys.executable> <脚本>'` 启动（macOS 上 `sys.executable` 必须是真实解释器，不能用 `/usr/bin/python3` 这个 xcrun 跳转程序，它会再次 exec、丢掉 `-a` 设的名字）。`-a ssh`：只有 argv[1] 为 `claude`，不算 Claude 进程；`-a node`：算；
-    - argv[0] 为 `<临时目录>/claude/versions/9.9.9`（同样用 `exec -a` 构造）、`HOME` 为测试临时 HOME：返回 4；argv[0] 为 `claude bg-pty-host`：返回 4；
+    - argv[0] 为 `<临时目录>/claude/versions/9.9.9`（同样用 `exec -a` 构造）、`HOME` 为测试临时 HOME：返回 4；argv[0] 为 `claude bg-pty-host`：返回 4；argv[0] 为 `<临时目录>/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe`：返回 4；
     - 报错中按每个伪 Claude 进程的配置目录给出对应的 `claude daemon stop --any` 命令；
     - 普通常驻进程（用 Python 写，macOS 上 `/bin/sleep` 的环境读不出）环境带 `CLAUDE_CONFIG_DIR=S`：返回 4，`usage=config-dir`；带别的值：不算占用；
     - 本工具自身与其子进程不被判为占用（运行迁移时环境中 `CLAUDE_CONFIG_DIR` 未设置的正常情况下，迁移完成）；
     - `S/ide/1.lock` 中 `pid` 为存活的测试子进程：返回 4，`usage=ide-lock`，输出中不含 `authToken` 的值；`pid` 为已退出进程：不算占用；lock 文件不是合法 JSON：跳过并警告；
-    - macOS：临时 HOME 下存在 `Library/LaunchAgents/com.anthropic.claude-daemon.plist`：返回 4，`usage=daemon-service`，提示含 `claude daemon uninstall`；
+    - 已安装系统服务（macOS：临时 HOME 下的 `Library/LaunchAgents/com.anthropic.claude-daemon.plist`；Linux：`$XDG_CONFIG_HOME/systemd/user/com.anthropic.claude-daemon.service`）：返回 4，`usage=daemon-service`，`path=` 为该文件，提示含 `claude daemon uninstall`；
     - 本工具环境中带 `CLAUDE_CODE_CHILD_SESSION=1`：返回 4，`usage=inside-claude-session`，S 未动；只带 `CLAUDECODE=1`：不受影响；
     - Linux：测试钩子 `MULTI_CLAUDE_TEST_MODE=1` 加 `MULTI_CLAUDE_TEST_PROC1_COMM=bwrap`：判为检查失败；不设 `MULTI_CLAUDE_TEST_MODE` 时钩子不生效；判为检查失败时返回 1 并提示 `--skip-process-check`；值为 `systemd`：不影响；
     - 路径占用（打开 S 下的文件、工作目录在 S 下）移植；
@@ -537,8 +537,8 @@ macOS 的查询命令固定为 `security find-generic-password -a <keychain_acco
 - **启动命令命名**：2026-09-30 用户决定采用 `claude-<名称>`。
 - **启动命令是否清除 `CLAUDE_CODE_CHILD_SESSION`**：2026-09-30 用户决定不清除。背景：从某个 Claude 会话的 Bash 工具里运行 `claude-<名称>` 时，继承的该变量会让新会话不进入历史、`--resume` 与 `claude agents`（依据 16）。清除它，嵌套启动的会话就和终端里启动的一样；不清除，保持 Claude 对“子会话”的默认处理。一期默认不清除。
 - **`CLAUDE_CODE_HTTP_PROXY` / `CLAUDE_CODE_HTTPS_PROXY`**：源码中出现（为子进程设置代理时读取），文档未列出。`off` 一期不清除它们；如用户环境中设置了，`list` 给出提示。2026-09-30 用户决定保持不清除。
-- **Linux 上 supervisor 的服务安装形态**：本次只提取了 macOS 构建，Linux 上 `claude daemon install` 是否装成 systemd user 服务、单元名为何未核实。编码阶段在 Linux 测试机上提取 Linux 构建的字符串核实（只读，不执行 install）；核实前一期 Linux 只靠占用检查第 2 条拦运行中的进程。不阻塞编码。
-- **代理实测**：契约依据官方文档。发布前在 Linux 测试机上用记录连接的代理，按 multi-codex §10 的方法实测 http 代理与 `off`；需要该机已登录 Claude，若未登录则只测到“请求经过代理”为止。不阻塞编码。
+- **Linux 上 supervisor 的服务安装形态**：已关闭（2026-09-30）。从 Linux 构建提取源码核实为 systemd user unit（依据 14），占用检查第 5 条已覆盖。
+- **代理实测**：已关闭（2026-09-30）。Linux 测试机上 npm 版 Claude Code 2.1.286、临时 HOME、假 API key（不登录），用只记录 CONNECT 目标的本地代理跑 `claude-<名称> -p`：端口代理时全部连接经过代理（api.anthropic.com、github.com、http-intake.logs.us5.datadoghq.com）；`off` 且父环境设了代理时代理收到 0 个连接；`inherit` 对照组与端口代理相同。
 
 ## 11. 二期：Windows 支持（不在本期编码范围）
 

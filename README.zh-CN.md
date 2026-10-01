@@ -171,7 +171,7 @@ multi-claude apply -f accounts.json
 - 有在你的家目录下运行的 Claude Code 进程，包括后台会话（报错会按每个配置目录给出对应的 `claude daemon stop --any` 命令）；
 - 有进程的 `CLAUDE_CONFIG_DIR` 指向 `~/.claude`；
 - `~/.claude/ide/` 中有仍然存活的 IDE 扩展锁；
-- macOS 上安装了后台服务 `~/Library/LaunchAgents/com.anthropic.claude-daemon.plist`（先运行 `claude daemon uninstall`，迁移完成后可再安装）；
+- 安装了后台服务：macOS 上是 `~/Library/LaunchAgents/com.anthropic.claude-daemon.plist`，Linux 上是 `~/.config/systemd/user/com.anthropic.claude-daemon.service`（先运行 `claude daemon uninstall`，迁移完成后可再安装）；
 - 本工具自身环境里有 `CLAUDE_CODE_CHILD_SESSION`，说明它运行在某个 Claude Code 会话中。如果确认不是（这个变量可能经 screen、tmux 或由 Claude Code 启动的程序继承下来），可以用 `env -u CLAUDE_CODE_CHILD_SESSION multi-claude ...`。
 
 同时请退出 Claude 桌面应用。macOS 上 Apple 自带程序（例如系统自带的 shell）不向其它进程公开环境变量，所以在这类 shell 里导出的 `CLAUDE_CONFIG_DIR` 检测不到；迁移时会输出有多少个进程无法检查。`--skip-process-check` 跳过以上全部检查，风险自负。但它不跳过一项预检：运行 multi-claude 的 shell 里 `CLAUDE_CONFIG_DIR` 指向 `~/.claude` 时，请先 `unset CLAUDE_CONFIG_DIR`。

@@ -30,8 +30,12 @@ ISOLATION_BREAKING_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_C
 # Claude Code 只在它自己拉起的子进程（Bash 工具、hook、status line 等）里设置这个变量；
 # 本工具环境里有它，说明正运行在某个 Claude 会话里（方案 §5.1.7 第 0 条）。
 CHILD_SESSION_ENV = "CLAUDE_CODE_CHILD_SESSION"
-# 安装成系统服务的后台 supervisor（方案 §3 依据 14），只带 PATH，总是服务默认账号。
-DAEMON_PLIST = os.path.join("Library", "LaunchAgents", "com.anthropic.claude-daemon.plist")
+# 安装成系统服务的后台 supervisor（方案 §3 依据 14）：只带 PATH、不设 CLAUDE_CONFIG_DIR，总是服务默认账号。
+# macOS 是 LaunchAgent；Linux 是 systemd user unit，位置随 XDG_CONFIG_HOME（2.1.286 Linux 构建实测）。
+DAEMON_SERVICE_NAME = "com.anthropic.claude-daemon"
+DAEMON_PLIST = os.path.join("Library", "LaunchAgents", DAEMON_SERVICE_NAME + ".plist")
+# Claude Code 的 npm 包安装目录；当前版本在其中放原生程序 bin/claude.exe，旧版本放 JS 入口。
+NPM_PACKAGE_MARKER = "/@anthropic-ai/claude-code/"
 
 TEST_MODE_ENV = "MULTI_CLAUDE_TEST_MODE"
 
@@ -231,15 +235,18 @@ class ClaudeUsers(NamedTuple):
 def is_claude_process(argv: List[str], exe: str) -> bool:
     """按 argv 与可执行文件路径判断是否 Claude Code 进程（方案 §5.1.7 第 2 条，依据 11）。
 
-    终端启动的 claude 的 argv[0] 是 `claude`，但 Claude 自己拉起的子进程不一定：
-    pinToCurrentBinary 时直接用版本文件路径，后台会话宿主的 argv[0] 是 `claude bg-pty-host`，
-    npm 安装形态是 `node .../bin/claude`。不能只看 argv[1]，否则 `ssh claude` 之类会被误判进来。
+    终端启动的 claude 的 argv[0] 是 `claude`，但 Claude 自己拉起的子进程不一定：原生程序拉起子进程时
+    argv[0] 就是 process.execPath——官方安装是 `.../claude/versions/<版本>`，npm 安装是
+    `.../@anthropic-ai/claude-code/bin/claude.exe`；后台会话宿主的 argv[0] 是 `claude bg-pty-host`；
+    旧版 npm 包是 `node .../bin/claude`。不能只看 argv[1]，否则 `ssh claude` 之类会被误判进来。
     """
     argv0 = argv[0] if argv else ""
     base = os.path.basename(argv0)
     if base == "claude" or base.startswith("claude "):
         return True
     if "/claude/versions/" in argv0 or "/claude/versions/" in exe:
+        return True
+    if NPM_PACKAGE_MARKER in argv0 or NPM_PACKAGE_MARKER in exe:
         return True
     if "--bg-pty-host" in argv:
         return True
@@ -515,14 +522,27 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _daemon_service() -> List[BusyProcess]:
-    """第 5 条（macOS）：装了 LaunchAgent 形态的 supervisor 时，它随时可能被 launchd 拉起并写 S。
+def daemon_service_path() -> Optional[str]:
+    """`claude daemon install` 写下的服务文件路径；不支持的平台返回 None。
 
-    不论进程是否在运行都判占用；pid 记为 0 表示这不是某个具体进程。
+    Linux 上 Claude 按它自己进程的 XDG_CONFIG_HOME 取位置，这里用本工具的环境推算，二者通常一致。
     """
-    if sys.platform != "darwin":
-        return []
-    plist = os.path.join(os.path.expanduser("~"), DAEMON_PLIST)
-    if os.path.lexists(plist):
-        return [BusyProcess(0, "launchd", "daemon-service", plist)]
+    if sys.platform == "darwin":
+        return os.path.join(os.path.expanduser("~"), DAEMON_PLIST)
+    if sys.platform.startswith("linux"):
+        config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+        return os.path.join(config_home, "systemd", "user", DAEMON_SERVICE_NAME + ".service")
+    return None
+
+
+def _daemon_service() -> List[BusyProcess]:
+    """第 5 条：装了系统服务形态的 supervisor 时，它随时可能被 launchd / systemd 拉起并写 S。
+
+    该服务设了自动重启（Linux 为 Restart=always），所以不论进程此刻是否在运行都判占用；
+    pid 记为 0 表示这不是某个具体进程。
+    """
+    path = daemon_service_path()
+    if path is not None and os.path.lexists(path):
+        manager = "launchd" if sys.platform == "darwin" else "systemd"
+        return [BusyProcess(0, manager, "daemon-service", path)]
     return []

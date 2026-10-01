@@ -308,8 +308,10 @@ def _busy_check(source: str) -> int:
     for message in users.warnings:
         warn(message)
     if users.unreadable:
+        # Linux 上通常是已退出或不可 dump 的进程；macOS 上还包括系统隐去环境的 Apple 自带程序。
         info("the environment of {} process(es) could not be read, so they were not checked for "
-             "CLAUDE_CONFIG_DIR (on macOS, Apple system programs such as the shells hide it)".format(users.unreadable))
+             "CLAUDE_CONFIG_DIR (for example, macOS hides it for Apple's own programs such as the "
+             "system shells)".format(users.unreadable))
     seen = {process.pid for process in busy}
     busy.extend(process for process in users.busy if process.pid == 0 or process.pid not in seen)
     if not busy:
@@ -333,7 +335,7 @@ def _busy_check(source: str) -> int:
         for command in users.stop_commands:
             print("    " + command, file=sys.stderr)
     if any(process.usage == "daemon-service" for process in busy):
-        print("  the background service is installed and launchd may start it at any time; run "
+        print("  the background service is installed and launchd/systemd may restart it at any time; run "
               "`claude daemon uninstall` first and install it again after the migration", file=sys.stderr)
     return accounts.EXIT_BUSY
 
