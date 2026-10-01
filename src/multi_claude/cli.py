@@ -7,13 +7,15 @@
 import argparse
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
-from . import __version__, accounts, completion, doctor, identity, migrate, platform, routes, statusline, usage
+from . import (__version__, accounts, completion, doctor, identity, migrate, platform, routes, sessions, statusline,
+               usage)
 from .actions import error, info, warn
 from .config import (DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError, RouteRule,
                      is_unshareable, load_config, normalize_proxy, parse_config, validate_env_key, validate_name,
@@ -152,6 +154,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_statusline.add_argument("action", choices=("install", "uninstall"))
     p_statusline.add_argument("file", metavar="FILE")
     _add_dry_run(p_statusline)
+
+    p_handoff = sub.add_parser("handoff", help="copy a Claude session to another account so that it can be resumed "
+                                               "there: handoff TARGET [--from NAME] [--session ID]")
+    p_handoff.add_argument("target", metavar="TARGET")
+    p_handoff.add_argument("--from", dest="source", metavar="NAME",
+                           help="account that has the session (default: the account of the Claude session "
+                                "this runs in)")
+    p_handoff.add_argument("--session", metavar="ID",
+                           help="session to copy (default: the current session, else the latest one here)")
+    p_handoff.add_argument("--force", action="store_true",
+                           help="back up and replace a different copy of the session in TARGET")
+    _add_dry_run(p_handoff)
     return parser
 
 
@@ -241,6 +255,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.command == "statusline":
             # 只改用户指定的设置文件，不碰 config.json 与账号目录，所以不加写锁、迁移未完成时也放行。
             return cmd_statusline(args.action, args.file, args.dry_run)
+        if args.command == "handoff":
+            if notice:
+                # 迁移进行到一半时账号目录可能正在搬动，复制进去的会话可能落在半迁移的目录里。
+                error("finish the unfinished migration before running `handoff`", phase="handoff")
+                return accounts.EXIT_ERROR
+            # 不加写锁：只读来源账号、只写目标账号的 projects/，不碰 config.json。
+            return cmd_handoff(args.target, args.source, args.session, args.force, args.dry_run)
         if args.command == "mcp":
             if notice:
                 # 迁移进行到一半时账号目录可能正在搬动，claude 写进去的内容可能落在半迁移的目录里。
@@ -831,6 +852,68 @@ def _format_age(delta) -> str:
     if minutes < 48 * 60:
         return "{}h ago".format(minutes // 60)
     return "{}d ago".format(minutes // (24 * 60))
+
+
+def cmd_handoff(target_name: str, source_name: Optional[str], session_id: Optional[str], force: bool,
+                dry_run: bool) -> int:
+    """把一条会话复制到目标账号并打印续聊命令。目标已有不同内容的同 ID 会话时退出 3、不改任何文件。"""
+    config, exists = load_config()
+    if not exists:
+        raise _NotRegistered(target_name)
+    target = _registered(config, _checked_name(target_name))
+    environ = os.environ
+    in_session = bool(environ.get("CLAUDECODE"))
+    # 当前 Claude 会话所属账号；不在会话里时为 None。
+    session_account = statusline.account_for(config, environ.get("CLAUDE_CONFIG_DIR")) if in_session else None
+    if source_name is not None:
+        source = _registered(config, _checked_name(source_name))
+    elif in_session:
+        # 在会话里用 ! 运行：Claude 把自己的 CLAUDE_CONFIG_DIR 传给子进程，default 身份账号则没有这个变量。
+        source = session_account
+        if source is None:
+            raise UsageError("cannot tell which account this Claude session belongs to; use --from NAME")
+    else:
+        # 普通终端里没有 CLAUDE_CONFIG_DIR 不能说明用的是 default 账号，不猜。
+        raise UsageError("--from is required outside a Claude session")
+    if source.name == target.name:
+        raise UsageError("the session is already in account {!r}".format(target.name))
+    if session_id is not None and not sessions.SESSION_ID_PATTERN.match(session_id):
+        raise UsageError("invalid session id {!r}".format(session_id))
+    # 只有来源就是当前会话所属账号时，CLAUDE_CODE_SESSION_ID 才指向来源里的会话。
+    current = environ.get("CLAUDE_CODE_SESSION_ID") if session_account is not None and session_account is source \
+        else None
+    target_dir = accounts.account_dir(config, target.name)
+    if not os.path.isdir(target_dir):
+        error("account directory of {} does not exist".format(target.name), phase="handoff", path=target_dir)
+        return accounts.EXIT_ERROR
+    try:
+        handoff = sessions.plan(accounts.account_dir(config, source.name), target_dir,
+                                sessions.cwd_variants(dict(environ)), session_id, current)
+    except sessions.HandoffError as exc:
+        error(str(exc), phase="handoff")
+        return accounts.EXIT_ERROR
+    target_file = os.path.join(handoff.target_dir, handoff.session_id + ".jsonl")
+    if handoff.state == sessions.CONFLICT and not force:
+        error("{} already has a different copy of session {}; use --force to back it up and replace it".format(
+            target.name, handoff.session_id), phase="handoff", path=target_file)
+        return accounts.EXIT_CONFLICT
+    # cd 到找到会话时用的写法（物理路径或软链写法的 $PWD），目标账号才会按同一目录名找到会话。
+    resume = "cd {} && claude-{} --resume {}".format(shlex.quote(handoff.cwd), target.name, handoff.session_id)
+    if handoff.state == sessions.UNCHANGED:
+        info("handoff: session {} is already in {} (unchanged)".format(handoff.session_id, target.name))
+    elif dry_run:
+        info("handoff: would copy session {} from {} to {} ({}){}".format(
+            handoff.session_id, source.name, target.name, handoff.target_dir,
+            ", backing up the existing copy" if handoff.state == sessions.CONFLICT else ""))
+        return accounts.EXIT_OK
+    else:
+        backups = sessions.execute(handoff, force)
+        info("handoff: copied session {} from {} to {} ({})".format(
+            handoff.session_id, source.name, target.name, handoff.target_dir))
+        for backup in backups:
+            info("backup: {}".format(backup))
+    info("continue with: {}".format(resume))
+    return accounts.EXIT_OK
 
 
 def cmd_statusline(action: str, path: str, dry_run: bool) -> int:
