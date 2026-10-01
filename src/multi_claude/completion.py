@@ -16,7 +16,7 @@ SHELLS = ("bash", "zsh", "fish")
 POSITIONAL_KINDS = {
     "migrate-default": ["name"], "add": ["name"], "proxy": ["name", "proxy"], "env": ["name"],
     "args": ["name"], "remove": ["name"], "usage": ["name"], "completion": ["shell"],
-    "route": ["dir", "name"], "which": ["dir"],
+    "route": ["dir", "name"], "which": ["dir"], "rename": ["name"], "mcp": ["name"],
 }
 # 选项值是路径、应按文件补全的选项。
 PATH_OPTIONS = ("-f", "--file", "--root", "--bin-dir", "--shared-dir")

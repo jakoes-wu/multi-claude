@@ -7,6 +7,8 @@
 import argparse
 import json
 import os
+import shutil
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
@@ -16,6 +18,7 @@ from .actions import error, info, warn
 from .config import (DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError, RouteRule,
                      load_config, normalize_proxy, parse_config, validate_env_key, validate_name, validate_route_path,
                      validate_value)
+from .env import account_env
 from .fsutil import expand
 from .lock import LockBusyError, WriteLock
 
@@ -123,6 +126,15 @@ def build_parser() -> argparse.ArgumentParser:
                             help="run plain claude when no route matches (the initial behaviour)")
     _add_dry_run(p_route)
 
+    p_rename = sub.add_parser("rename", help="rename an account and its launcher; the directory and login stay")
+    p_rename.add_argument("old")
+    p_rename.add_argument("new")
+    _add_dry_run(p_rename)
+
+    # mcp 的 claude 参数在 argparse 之前从 argv 里切走（见 _split_args_command）。
+    p_mcp = sub.add_parser("mcp", help="run `claude mcp ...` as an account: mcp NAME [ARG ...]")
+    p_mcp.add_argument("name")
+
     p_which = sub.add_parser("which", help="show which account claude-auto would use in DIR (default: here)")
     p_which.add_argument("path", nargs="?", metavar="DIR")
 
@@ -136,11 +148,12 @@ def _add_dry_run(parser: argparse.ArgumentParser) -> None:
 
 
 def _split_args_command(argv: List[str]) -> Tuple[List[str], Optional[List[str]]]:
-    """子命令是 `args` 时，把第一个 `--` 之后的全部内容取出来作为参数列表。
+    """子命令是 `args` 时，把第一个 `--` 之后的全部内容取出来作为参数列表；
+    子命令是 `mcp` 时，账号名之后的全部内容原样作为 `claude mcp` 的参数（不经 argparse）。
 
     不能用 argparse.REMAINDER：可选位置参数加 --defaults 加 REMAINDER 时，
     `args --defaults -- --settings s` 会被解析成账号名 `--settings`（方案 §5.1.2，实测 3.10/3.11/3.13）。
-    返回 (交给 argparse 的部分, 参数列表)；不是 `args` 子命令时参数列表为 None。
+    返回 (交给 argparse 的部分, 参数列表)；不是这两个子命令时参数列表为 None。
     """
     command_index = None
     for index, token in enumerate(argv):
@@ -149,6 +162,13 @@ def _split_args_command(argv: List[str]) -> Tuple[List[str], Optional[List[str]]
         if not token.startswith("-"):
             command_index = index
             break
+    if command_index is not None and argv[command_index] == "mcp":
+        rest = argv[command_index + 1:]
+        if rest and rest[0] in ("-h", "--help"):
+            return argv, []
+        if not rest or rest[0].startswith("-"):
+            raise UsageError("mcp needs an account name first, e.g. `multi-claude mcp NAME list`")
+        return argv[:command_index + 2], rest[1:]
     if command_index is None or argv[command_index] != "args":
         return argv, None
     try:
@@ -200,6 +220,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             return cmd_usage(args.name, args.json)
         if args.command == "which":
             return cmd_which(args.path)
+        if args.command == "mcp":
+            if notice:
+                # 迁移进行到一半时账号目录可能正在搬动，claude 写进去的内容可能落在半迁移的目录里。
+                error("finish the unfinished migration before running `mcp`")
+                return accounts.EXIT_ERROR
+            # 不加写锁：claude mcp 只改 Claude 自己的文件，可能需要交互（如远程服务器登录）。
+            return cmd_mcp(args.name, args.launch_args or [])
         if _blocked_by_migration(args, notice):
             return accounts.EXIT_ERROR
         with WriteLock():
@@ -219,6 +246,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     except UsageError as exc:
         error(str(exc))
         return accounts.EXIT_USAGE
+    except _RenameConflict as exc:
+        error("account {!r} already exists".format(exc.args[0]))
+        return accounts.EXIT_CONFLICT
     except _NotRegistered as exc:
         # 与 proxy 一致：对未登记的账号名返回 1。
         error("account {!r} is not registered".format(exc.args[0]))
@@ -253,6 +283,7 @@ def dispatch(args: argparse.Namespace) -> int:
     # 写完后要检查“可变参数吞参”与“settings 覆盖代理”的账号；None 表示全部账号。
     warn_names: Optional[List[str]] = []
     adopted_dir: Optional[str] = None
+    renamed: Optional[Tuple[str, str]] = None
 
     if args.command == "init":
         if args.root:
@@ -316,6 +347,10 @@ def dispatch(args: argparse.Namespace) -> int:
             warn_names = [account.name]
     elif args.command == "route":
         _apply_route_args(args, new)
+    elif args.command == "rename":
+        old_name = _rename(new, args.old, args.new)
+        orphan_scope = frozenset([old_name.casefold()])
+        renamed = (old_name, args.new)
     elif args.command == "remove":
         name = _checked_name(args.name)
         account = new.find(name)
@@ -332,6 +367,9 @@ def dispatch(args: argparse.Namespace) -> int:
 
     code = accounts.converge(old, new, config_exists=exists, dry_run=args.dry_run,
                              orphan_scope=orphan_scope, adopt_accounts=adopt_accounts)
+    if code == accounts.EXIT_OK and renamed is not None and not args.dry_run:
+        info("renamed {} to {} (directory {} unchanged)".format(
+            renamed[0], renamed[1], accounts.account_dir(new, renamed[1])))
     if code == accounts.EXIT_OK:
         accounts.warn_launch_settings(new, warn_names)
         if adopted_dir is not None:
@@ -375,6 +413,54 @@ def _apply_route_args(args: argparse.Namespace, new: Config) -> None:
         new.route_rules[existing[0]] = RouteRule(new.route_rules[existing[0]].path, account.name)
     else:
         new.route_rules.append(rule)
+
+
+def _rename(new: Config, old: str, target: str) -> str:
+    """改账号名：账号对象换键、dir 不变，路由引用跟着改。返回原登记的账号名。"""
+    _checked_name(target)
+    account = _registered(new, _checked_name(old))
+    if account.name.casefold() == target.casefold():
+        # 大小写不敏感的文件系统上新旧启动命令是同一个文件，删旧建新会互相覆盖。
+        raise UsageError("only the letter case differs; renaming that way is not supported")
+    if new.find(target) is not None:
+        # 交给收敛计划报冲突（退出码 3）：这里只需保证不覆盖已有账号。
+        raise _RenameConflict(target)
+    old_name = account.name
+    del new.accounts[old_name]
+    account.name = target
+    new.accounts[target] = account
+    new.route_rules = [RouteRule(rule.path, target) if rule.account == old_name else rule
+                       for rule in new.route_rules]
+    if new.route_default == old_name:
+        new.route_default = target
+    return old_name
+
+
+class _RenameConflict(Exception):
+    """rename 的新名字已被另一个账号使用，对应退出码 3。"""
+
+
+def cmd_mcp(name: str, claude_args: List[str]) -> int:
+    """以账号的身份环境运行 `claude mcp …`；不带固定参数（见 env.py 说明）。"""
+    config, _ = load_config()
+    account = config.find(_checked_name(name))
+    if account is None:
+        error("account {!r} is not registered".format(name))
+        return accounts.EXIT_ERROR
+    directory = accounts.account_dir(config, account.name)
+    if not os.path.isdir(directory):
+        error("account directory does not exist: {}".format(directory))
+        return accounts.EXIT_ERROR
+    if account.identity == IDENTITY_DEFAULT and accounts.default_link_status(config, account) != "ok":
+        # 与启动命令相同的保护：~/.claude 不再指向账号目录时，直接运行会落到别的目录。
+        error("{} no longer points to {}; restore the link or run multi-claude migrate-default again".format(
+            accounts.default_dir(), directory))
+        return accounts.EXIT_ERROR
+    process_env = account_env(config, account, os.environ)
+    if shutil.which("claude", path=process_env.get("PATH")) is None:
+        error("claude not found in PATH")
+        return 127
+    return subprocess.call(["claude", "mcp"] + claude_args, env=process_env)
 
 
 def cmd_which(path: Optional[str]) -> int:
@@ -460,7 +546,7 @@ def _warn_if_not_logged_in(directory: str) -> None:
 def _load_apply_file(path: str, old: Config) -> Config:
     """读取 apply -f 的文件。
 
-    managed_links 与 identity 是工具内部状态，已登记账号一律沿用当前配置里的值；
+    managed_links、identity 与 dir 是工具内部状态，已登记账号一律沿用当前配置里的值；
     dir 与 default 之间的转换只能由 migrate-default 完成（方案 §5.1.6）。文件中未登记、
     却写了 identity=default 的账号不登记：直接建目录会得到一个没有登录的空账号。
     """
@@ -476,6 +562,8 @@ def _load_apply_file(path: str, old: Config) -> Config:
         if current is not None:
             account.identity = current.identity
             account.managed_links = list(current.managed_links)
+            # 目录名同样是内部状态：改了它，macOS 上按路径绑定的登录就会丢。
+            account.dir = current.dir
             continue
         if account.identity == IDENTITY_DEFAULT:
             info("skip account {0} (identity is default; run multi-claude migrate-default {0} to create it, "

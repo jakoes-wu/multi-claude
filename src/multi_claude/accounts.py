@@ -41,8 +41,10 @@ def account_dir(config: Config, name: str) -> str:
     """账号目录路径字符串：只展开 `~` 并转绝对路径，不做 realpath。
 
     dir 身份账号的 macOS 钥匙串服务名由这串字符决定，与 Claude 的 we() 一样不能解析软链。
+    目录名取账号的 dir（改过名的账号与账号名不同）；name 未登记时按 name 计算（新建账号时）。
     """
-    return os.path.join(expand(config.root), name)
+    account = config.find(name)
+    return os.path.join(expand(config.root), account.dir if account is not None else name)
 
 
 def default_dir() -> str:
@@ -87,7 +89,8 @@ def plan(old: Config, new: Config, *, config_exists: bool = True,
                                   "account {!r} is registered as {!r}; renaming is not supported".format(
                                       account.name, old_account.name)))
             continue
-        directory = os.path.join(new_root, account.name)
+        directory = os.path.join(new_root, account.dir)
+        actions.extend(_plan_dir_owner_conflict(new, account))
         actions.extend(_plan_account_dir(directory, account, assumed))
         actions.extend(_plan_launcher(new_bin, new, account))
         if old_account is not None and old_bin != new_bin:
@@ -100,8 +103,10 @@ def plan(old: Config, new: Config, *, config_exists: bool = True,
         if new.find(old_account.name) is None:
             actions.extend(_plan_launcher_delete(old_bin, old_account.name, planned_deletes,
                                                  "account removed"))
-            actions.extend(shared.plan_remove_links(old_account, os.path.join(old_root, old_account.name),
-                                                    old.shared_dir))
+            # 改名时新账号沿用同一个目录：共享软链仍在使用，不能当成“账号移除”删掉。
+            if not any(other.dir.casefold() == old_account.dir.casefold() for other in new.accounts.values()):
+                actions.extend(shared.plan_remove_links(old_account, os.path.join(old_root, old_account.dir),
+                                                        old.shared_dir))
 
     if orphan_scope:
         for name, path in launcher.scan_managed(new_bin).items():
@@ -117,6 +122,22 @@ def plan(old: Config, new: Config, *, config_exists: bool = True,
     config_action = Action(CREATE if not config_exists else (UPDATE if config_changed else UNCHANGED),
                            "config", config_path())
     return [config_action] + actions
+
+
+def _plan_dir_owner_conflict(config: Config, account: Account) -> List[Action]:
+    """与 config._check_dirs 同一套规则，在计划阶段判冲突，保证写出的配置下次仍能加载：
+    ① 两个账号用同一个目录（典型：`rename work job` 之后再 `add work`，新账号会落进 job 的目录）；
+    ② 账号名等于另一个账号的目录（典型：job 的目录是 work 时 `rename main work`）。"""
+    for other in config.accounts.values():
+        if other is account:
+            continue
+        if other.dir.casefold() == account.dir.casefold():
+            return [Action(CONFLICT, "config", config_path(),
+                           "account {!r} would use the directory of account {!r}".format(account.name, other.name))]
+        if other.dir.casefold() == account.name.casefold():
+            return [Action(CONFLICT, "config", config_path(),
+                           "account name {!r} is the directory of account {!r}".format(account.name, other.name))]
+    return []
 
 
 def _plan_router(old: Config, new: Config) -> List[Action]:
@@ -174,13 +195,13 @@ def _plan_account_dir(directory: str, account: Account, assumed: Set[str]) -> Li
     # 账号目录本身是软链（例如用户手工迁移后留的链接）也可以接受，只要最终指向目录。
     if kind == KIND_DIR or os.path.isdir(directory):
         actual = _actual_entry_name(directory)
-        if actual is not None and actual != account.name:
+        if actual is not None and actual != account.dir:
             # 大小写不敏感的文件系统上，`add work` 会命中磁盘上的 `Work/`；启动命令却会写成 `work`，
             # 路径字符串变了，macOS 上的登录（按字符串哈希）随之失效。
             return [Action(CONFLICT, "account-dir", directory,
                            "directory exists as {!r} (differs only in case); the launcher would use {!r}, "
                            "which is not the path you logged in with; register it as {!r}".format(
-                               actual, account.name, actual))]
+                               actual, account.dir, actual))]
         return [Action(UNCHANGED, "account-dir", directory)]
     return [Action(CONFLICT, "account-dir", directory, "exists but is not a directory")]
 

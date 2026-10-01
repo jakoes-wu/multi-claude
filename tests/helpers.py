@@ -26,6 +26,7 @@ SRC = os.path.join(ROOT, "src")
 FAKE_CLAUDE = """#!/bin/sh
 printf '%s\\n' "$@" > "$FAKE_CLAUDE_OUT.args"
 env > "$FAKE_CLAUDE_OUT.env"
+exit "${FAKE_CLAUDE_RC:-0}"
 """
 
 # 每次调用把参数逐行追加到记录文件，以一行 `--` 分隔；退出码由 FAKE_SECURITY_RC 决定（默认 44 = 不存在）。
