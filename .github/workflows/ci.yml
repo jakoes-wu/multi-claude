@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            python: "3.8"
+          - os: ubuntu-latest
+            python: "3.12"
+          # The macOS arm64 runners may not provide Python 3.8, so macOS starts at 3.10.
+          - os: macos-latest
+            python: "3.10"
+          - os: macos-latest
+            python: "3.12"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install lint tools
+        run: python -m pip install pyflakes
+      - name: Lint
+        run: python -m pyflakes src tests
+      - name: Tests must not hard-code home directories
+        # helpers.py builds every path from a temporary directory; nothing else may name a real home.
+        run: "! grep -rnE '/Users/|/home/' tests --include='*.py' --exclude=helpers.py"
+      - name: Install shellcheck (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y shellcheck lsof
+      - name: Test
+        run: python -m unittest discover -s tests -t tests -v
