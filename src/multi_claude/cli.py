@@ -5,11 +5,13 @@
 """
 
 import argparse
+import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
-from . import __version__, accounts, identity, migrate, platform
+from . import __version__, accounts, completion, doctor, identity, migrate, platform, usage
 from .actions import error, info, warn
 from .config import (DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError,
                      load_config, normalize_proxy, parse_config, validate_env_key, validate_name, validate_value)
@@ -18,6 +20,7 @@ from .lock import LockBusyError, WriteLock
 
 # 源码中出现、官方文档未列出的代理变量（方案 §10）：`off` 一期不清除它们，list 时只提示。
 _UNMANAGED_PROXY_VARS = ("CLAUDE_CODE_HTTP_PROXY", "CLAUDE_CODE_HTTPS_PROXY")
+_ONE_DAY = timedelta(days=1)
 
 
 class UsageError(Exception):
@@ -93,8 +96,23 @@ def build_parser() -> argparse.ArgumentParser:
     _add_dry_run(p_apply)
 
     p_list = sub.add_parser("list", help="show accounts and their status")
-    p_list.add_argument("--verbose", action="store_true",
-                        help="also show the keychain service and credentials file of each account")
+    list_mode = p_list.add_mutually_exclusive_group()
+    list_mode.add_argument("--verbose", action="store_true",
+                           help="also show the keychain service and credentials file of each account")
+    list_mode.add_argument("--json", action="store_true", help="print machine-readable JSON (includes usage)")
+    list_mode.add_argument("--names", action="store_true", help="print only the account names, one per line")
+
+    p_usage = sub.add_parser("usage", help="show the last known 5-hour and 7-day usage of each account "
+                                           "(from Claude Code's own cache; never reads credentials)")
+    p_usage.add_argument("name", nargs="?")
+    p_usage.add_argument("--json", action="store_true", help="print machine-readable JSON")
+
+    p_doctor = sub.add_parser("doctor", help="check the accounts, launchers and environment (read-only)")
+    p_doctor.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    p_doctor.add_argument("--verbose", action="store_true", help="also list the checks that passed")
+
+    p_completion = sub.add_parser("completion", help="print a shell completion script")
+    p_completion.add_argument("shell", choices=completion.SHELLS)
     return parser
 
 
@@ -148,12 +166,23 @@ def main(argv: Optional[List[str]] = None) -> int:
         error("this platform is not supported yet (macOS and Linux only)")
         return accounts.EXIT_ERROR
 
+    # completion 与 doctor 在读取迁移记录之前分派：前者不依赖任何状态，后者要把损坏的配置或
+    # 迁移记录报告成检查项，而不是被下面的统一异常处理打断（方案 v0.2 §5.1.6）。
+    if args.command == "completion":
+        print(completion.render(args.shell, build_parser()), end="")
+        return accounts.EXIT_OK
+    if args.command == "doctor":
+        return cmd_doctor(args.json, args.verbose)
+
     try:
         notice = migrate.pending_journal_notice()
         if notice:
             warn(notice)
+        # list 与 usage 只读：不加写锁，迁移未完成时也放行。
         if args.command == "list":
-            return cmd_list(args.verbose)
+            return cmd_list(verbose=args.verbose, as_json=args.json, names_only=args.names)
+        if args.command == "usage":
+            return cmd_usage(args.name, args.json)
         if _blocked_by_migration(args, notice):
             return accounts.EXIT_ERROR
         with WriteLock():
@@ -393,12 +422,22 @@ def _checked_proxy(value: str) -> str:
         raise UsageError(str(exc))
 
 
-def cmd_list(verbose: bool = False) -> int:
+def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = False) -> int:
     config, exists = load_config()
+    if names_only:
+        # 给补全脚本用：只输出名称，不输出任何告警。
+        for name in config.accounts if exists else []:
+            print(name)
+        return accounts.EXIT_OK
     migrate.warn_isolation_env()
     for variable in _UNMANAGED_PROXY_VARS:
         if variable in os.environ:
             warn("{} is set; launchers do not change it, even with proxy off".format(variable))
+    if as_json:
+        _print_json(_list_data(config, exists))
+        if exists:
+            accounts.warn_launch_settings(config, None, note_invalid=True)
+        return accounts.EXIT_OK
     if not exists:
         info("no configuration yet at {}; run `multi-claude add NAME` to start".format(
             os.path.join(platform.state_dir(), "config.json")))
@@ -414,28 +453,157 @@ def cmd_list(verbose: bool = False) -> int:
     rows = [("NAME", "IDENTITY", "DIR", "PROXY", "SHARED", "LAUNCHER", "LOGIN", "LINK")]
     details = []
     default_account = None
-    for name, account in config.accounts.items():
-        directory = accounts.account_dir(config, name)
-        is_default = account.identity == IDENTITY_DEFAULT
-        if is_default:
-            default_account = account
-        rows.append((name, account.identity, "ok" if os.path.isdir(directory) else "missing-dir", account.proxy,
-                     "yes" if account.shared else "no", accounts.launcher_status(config, name),
-                     identity.probe(account.identity, directory),
-                     accounts.default_link_status(config, account) if is_default else "-"))
+    for entry in _account_entries(config):
+        if entry["identity"] == IDENTITY_DEFAULT:
+            default_account = entry["name"]
+        rows.append((entry["name"], entry["identity"], "ok" if entry["dir_exists"] else "missing-dir",
+                     entry["proxy"], "yes" if entry["shared"] else "no", entry["launcher"], entry["login"],
+                     entry["link"] or "-"))
         if verbose:
             details.append("  {}: keychain service {!r}, credentials file {}".format(
-                name, identity.service_name(account.identity, directory), identity.credentials_file(directory)))
+                entry["name"], entry["keychain_service"], entry["credentials_file"]))
     widths = [max(len(row[index]) for row in rows) for index in range(len(rows[0]))]
     for row in rows:
         print("  ".join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip())
     if default_account is not None:
         print("note: {} keeps its global state in {} (not moved by migrate-default)".format(
-            default_account.name, os.path.join(os.path.expanduser("~"), ".claude.json")))
+            default_account, os.path.join(os.path.expanduser("~"), ".claude.json")))
     for line in details:
         print(line)
     accounts.warn_launch_settings(config, None, note_invalid=True)
     return accounts.EXIT_OK
+
+
+def _account_entries(config: Config, with_usage: bool = False) -> List[dict]:
+    """list 的表格与 JSON 共用的每账号数据；表格的列取自这里，保证两种输出口径一致。"""
+    now = datetime.now(timezone.utc)
+    entries = []
+    for name, account in config.accounts.items():
+        directory = accounts.account_dir(config, name)
+        is_default = account.identity == IDENTITY_DEFAULT
+        entry = {
+            "name": name,
+            "identity": account.identity,
+            "dir": directory,
+            "dir_exists": os.path.isdir(directory),
+            "proxy": account.proxy,
+            "shared": account.shared,
+            "launcher": accounts.launcher_status(config, name),
+            "login": identity.probe(account.identity, directory),
+            "link": accounts.default_link_status(config, account) if is_default else None,
+            "keychain_service": identity.service_name(account.identity, directory),
+            "credentials_file": identity.credentials_file(directory),
+        }
+        if with_usage:
+            report = usage.read_usage(usage.global_state_path(account.identity, directory), now)
+            entry["usage"] = usage.report_to_dict(report, now)
+        entries.append(entry)
+    return entries
+
+
+def _list_data(config: Config, exists: bool) -> dict:
+    if not exists:
+        return {"schema_version": 1, "configured": False, "accounts": []}
+    return {
+        "schema_version": 1,
+        "configured": True,
+        "root": expand(config.root),
+        "bin_dir": expand(config.bin_dir),
+        "shared_dir": expand(config.shared_dir) if config.shared_dir else None,
+        "accounts": _account_entries(config, with_usage=True),
+    }
+
+
+def _print_json(data: dict) -> None:
+    print(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+# 固定英文缩写，不用 %a：%a 随系统语言变化，表格对不齐，也不利于脚本解析。
+_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def cmd_usage(name: Optional[str], as_json: bool) -> int:
+    """显示各账号最近一次已知的用量。数据来自 Claude Code 自己的缓存，不读凭据、不联网。"""
+    config, exists = load_config()
+    selected = list(config.accounts.values()) if exists else []
+    if name is not None:
+        account = config.find(_checked_name(name)) if exists else None
+        if account is None:
+            error("account {!r} is not registered".format(name))
+            return accounts.EXIT_ERROR
+        selected = [account]
+    now = datetime.now(timezone.utc)
+    reports = []
+    for account in selected:
+        directory = accounts.account_dir(config, account.name)
+        reports.append((account.name, usage.read_usage(usage.global_state_path(account.identity, directory), now)))
+    if as_json:
+        data = {"schema_version": 1, "configured": exists,
+                "accounts": [{"name": account_name, "usage": usage.report_to_dict(report, now)}
+                             for account_name, report in reports]}
+        _print_json(data)
+        return accounts.EXIT_OK
+    if not exists:
+        info("no configuration yet at {}; run `multi-claude add NAME` to start".format(
+            os.path.join(platform.state_dir(), "config.json")))
+        return accounts.EXIT_OK
+    rows = [("NAME", "5H", "7D", "UPDATED")]
+    for account_name, report in reports:
+        rows.append((account_name, _window_cell(report.five_hour, now), _window_cell(report.seven_day, now),
+                     _updated_cell(account_name, report, now)))
+    widths = [max(len(row[index]) for row in rows) for index in range(len(rows[0]))]
+    for row in rows:
+        print("  ".join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip())
+    print("Values come from Claude Code's own cache (.claude.json) and may be out of date; "
+          "multi-claude never reads credentials.")
+    return accounts.EXIT_OK
+
+
+def _window_cell(window: Optional[usage.UsageWindow], now: datetime) -> str:
+    if window is None:
+        return "-"
+    if usage.window_is_reset(window, now):
+        return "reset"
+    text = "{}%".format(int(round(window.percent)))
+    if window.resets_at is None:
+        return text
+    local = window.resets_at.astimezone()
+    when = local.strftime("%H:%M") if window.resets_at - now <= _ONE_DAY else _WEEKDAYS[local.weekday()]
+    return "{} {}".format(text, when)
+
+
+def _updated_cell(name: str, report: usage.UsageReport, now: datetime) -> str:
+    if report.status == usage.STATUS_NO_DATA:
+        return "no data (start claude-{} once)".format(name)
+    if report.status == usage.STATUS_UNREADABLE:
+        return "unreadable"
+    if report.status == usage.STATUS_OTHER_ACCOUNT:
+        return "cache belongs to an earlier login"
+    age = _format_age(now - report.fetched_at)
+    return age + (" (stale)" if report.status == usage.STATUS_STALE else "")
+
+
+def _format_age(delta) -> str:
+    minutes = max(0, int(delta.total_seconds() // 60))
+    if minutes < 60:
+        return "{}m ago".format(minutes)
+    if minutes < 48 * 60:
+        return "{}h ago".format(minutes // 60)
+    return "{}d ago".format(minutes // (24 * 60))
+
+
+def cmd_doctor(as_json: bool, verbose: bool) -> int:
+    try:
+        checks = doctor.run_checks()
+    except OSError as exc:
+        # 意外的读写错误也记成一条检查结果，保证 --json 在任何情况下都输出合法 JSON。
+        checks = [doctor.Check("doctor", doctor.LEVEL_ERROR, "-", "{}: {}".format(type(exc).__name__, exc))]
+    if as_json:
+        _print_json(doctor.to_dict(checks))
+    else:
+        for line in doctor.format_text(checks, verbose):
+            print(line)
+    return doctor.exit_code(checks)
 
 
 if __name__ == "__main__":

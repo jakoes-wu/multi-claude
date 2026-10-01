@@ -19,9 +19,9 @@ import json
 import os
 import sys
 import time
-from typing import Optional
+from typing import List, Optional
 
-from . import accounts, platform
+from . import accounts, launcher, platform
 from .actions import error, info, warn
 from .config import IDENTITY_DEFAULT, PROXY_INHERIT, Account, Config, load_config, normalize_proxy
 from .fsutil import (KIND_DIR, KIND_LINK, KIND_MISSING, atomic_write, build_manifest, copy_tree,
@@ -206,9 +206,25 @@ def _check_environment(source_path: str) -> int:
     return accounts.EXIT_OK
 
 
+def isolation_env_variables() -> List[str]:
+    """会破坏账号隔离的环境变量全集：ISOLATION_BREAKING_ENV 加上启动命令会清除的鉴权变量。
+
+    doctor 的 auth-env 检查与本模块的告警共用这一份清单，避免两处口径不一致。
+    """
+    variables = list(platform.ISOLATION_BREAKING_ENV)
+    variables.extend(name for name in launcher.AUTH_OVERRIDE_ENV if name not in variables)
+    return variables
+
+
 def warn_isolation_env() -> None:
-    for variable in platform.ISOLATION_BREAKING_ENV:
-        if os.environ.get(variable):
+    for variable in isolation_env_variables():
+        if not os.environ.get(variable):
+            continue
+        if variable in launcher.AUTH_OVERRIDE_ENV:
+            # 启动命令会清除它，影响的只是直接运行的 `claude`。
+            warn("{} is set in the environment; launchers clear it, but running `claude` "
+                 "directly uses it".format(variable))
+        else:
             warn("{} is set in the environment; every account launched from this shell "
                  "will share it".format(variable))
 

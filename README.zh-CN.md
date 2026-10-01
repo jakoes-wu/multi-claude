@@ -79,9 +79,12 @@ multi-claude list
 | `multi-claude args (名称 \| --defaults) -- [参数 ...]` | 整体替换固定参数；`--` 后面为空表示清空 |
 | `multi-claude remove 名称` | 注销账号并删除其启动命令。**账号目录和登录都会保留** |
 | `multi-claude apply [-f 文件]` | 按配置（或 `文件`）收敛全部账号 |
-| `multi-claude list [--verbose]` | 列出账号、启动命令和登录状态 |
+| `multi-claude list [--verbose \| --json \| --names]` | 列出账号、启动命令和登录状态；`--json` 额外包含用量，供脚本使用；`--names` 只输出名称 |
+| `multi-claude usage [名称] [--json]` | 显示各账号最近一次已知的 5 小时 / 7 天用量 |
+| `multi-claude doctor [--json] [--verbose]` | 检查配置、启动命令、账号目录、共享软链、登录与环境变量 |
+| `multi-claude completion bash\|zsh\|fish` | 输出 shell 补全脚本 |
 
-所有写命令都支持 `--dry-run`。`env`、`args`、`proxy` 对未登记的账号返回 1。
+所有写命令都支持 `--dry-run`。`env`、`args`、`proxy` 和 `usage 名称` 对未登记的账号返回 1。
 
 ### 默认位置
 
@@ -124,6 +127,31 @@ multi-claude env work MAX_THINKING_TOKENS=8000 --unset OLD_VAR
 - 值恰好是 `~` 或以 `~/` 开头时展开成绝对路径，其它值原样写入（不做 `$` 展开）。`--settings=~/x` **不会**展开，请写成 `--settings ~/x`。
 - 决定使用哪个登录的变量（`CLAUDE_CONFIG_DIR`、`CLAUDE_SECURESTORAGE_CONFIG_DIR`、`CLAUDE_CODE_CUSTOM_OAUTH_URL`、`HOME`、`USER`）、代理变量（请用 `proxy`）以及凭据（API key、token、secret、password 之类）一律拒绝。凭据请写进账号 `settings.json` 的 `env` 或使用 `apiKeyHelper`。
 - `args` 必须显式写 `--`。`--allowedTools`、`--add-dir` 这类取多个值的选项会吞掉后面所有不以 `-` 开头的参数；如果它是固定参数里的最后一个选项，运行启动命令时传入的提示词会被它吞掉，multi-claude 会告警。请在它后面再放一个选项（如上例的 `--settings`）。
+- 启动命令一律清除 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`CLAUDE_CODE_OAUTH_TOKEN`、`CLAUDE_CODE_OAUTH_REFRESH_TOKEN`：这些变量在 shell 里导出后，会让所有账号改用同一份凭据、绕过各自的登录。直接运行 `claude` 不受影响。
+
+### 用量
+
+```sh
+multi-claude usage
+```
+
+```text
+NAME   5H         7D       UPDATED
+work   23% 14:00  41% Fri  12m ago
+home   -          -        no data (start claude-home once)
+```
+
+数值是 Claude Code 自己缓存在该账号 `.claude.json`（default 身份为 `~/.claude.json`）里的最近一次结果。multi-claude 不读凭据、不联网，所以数据可能已经过时：`UPDATED` 显示数据年龄，超过一小时标注 `stale`。这份缓存由 Claude Code 自己写入，何时刷新未见官方说明。已过重置时间的窗口显示 `reset`。
+
+### 诊断与补全
+
+`multi-claude doctor` 只读检查：配置与未完成的迁移；`claude` 和启动命令目录是否在 `PATH` 中；每个启动命令是否最新、有没有被同名文件遮住；账号目录是否存在、权限是否为 `0700`；默认账号的软链；断开的共享软链；是否有登录；以及 `ANTHROPIC_API_KEY` 这类会覆盖账号登录的变量。每个问题都附修复命令。有错误时退出码为 1；`--json` 输出供脚本使用。
+
+```sh
+multi-claude completion bash > ~/.local/share/bash-completion/completions/multi-claude
+multi-claude completion zsh > "${fpath[1]}/_multi-claude"   # 或 fpath 中任意目录
+multi-claude completion fish > ~/.config/fish/completions/multi-claude.fish
+```
 
 ### 用 `apply` 声明式配置
 
