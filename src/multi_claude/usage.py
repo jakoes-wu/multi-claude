@@ -71,7 +71,11 @@ def read_usage(path: str, now: datetime) -> UsageReport:
     fetched_ms = cache.get("fetchedAtMs")
     if not isinstance(fetched_ms, int) or isinstance(fetched_ms, bool):
         return EMPTY
-    fetched_at = datetime.fromtimestamp(fetched_ms / 1000.0, tz=timezone.utc)
+    try:
+        fetched_at = datetime.fromtimestamp(fetched_ms / 1000.0, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        # 超出平台时间范围的整数（文件被写坏）也只降级为无数据，不能让 usage / list --json 崩溃。
+        return EMPTY
 
     cached_account = cache.get("accountUuid")
     oauth = data.get("oauthAccount")

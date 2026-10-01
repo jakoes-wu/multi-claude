@@ -59,6 +59,10 @@ class ParseTest(CliTestCase):
         bad_time = cache_doc()
         bad_time["cachedUsageUtilization"]["fetchedAtMs"] = "yesterday"
         self.assertEqual(usage.read_usage(self.path(bad_time), NOW).status, usage.STATUS_NO_DATA)
+        bad_time["cachedUsageUtilization"]["fetchedAtMs"] = 10 ** 30
+        self.assertEqual(usage.read_usage(self.path(bad_time), NOW).status, usage.STATUS_NO_DATA)
+        bad_time["cachedUsageUtilization"]["fetchedAtMs"] = -10 ** 30
+        self.assertEqual(usage.read_usage(self.path(bad_time), NOW).status, usage.STATUS_NO_DATA)
         self.assertEqual(usage.read_usage(self.path(cache_doc(five=None, seven=None)), NOW).status,
                          usage.STATUS_NO_DATA)
 
