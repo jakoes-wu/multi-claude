@@ -73,7 +73,7 @@ multi-claude list
 | ---- | ---- |
 | `multi-claude init [--root DIR] [--bin-dir DIR] [--shared-dir DIR] [--shared-items A,B]` | Create or change global settings. |
 | `multi-claude migrate-default NAME [--copy] [--keep-backup] [--proxy P] [--skip-process-check]` | Turn `~/.claude` into an account. |
-| `multi-claude add NAME [--proxy P] [--shared \| --no-shared] [--adopt]` | Add an account, adopt an existing directory, or change its options. |
+| `multi-claude add NAME [--proxy P] [--shared \| --no-shared] [--adopt] [--shared-exclude ITEM] [--shared-include ITEM]` | Add an account, adopt an existing directory, or change its options. `--shared-exclude` keeps one shared item out of this account; `--shared-include` undoes it. |
 | `multi-claude proxy NAME PORT\|URL\|off\|inherit` | Set an account's proxy. |
 | `multi-claude env (NAME \| --defaults) [K=V ...] [--unset K ...]` | Set or remove extra environment variables. |
 | `multi-claude args (NAME \| --defaults) -- [ARG ...]` | Replace the fixed arguments; `--` with nothing after it clears them. |
@@ -306,6 +306,17 @@ multi-claude add work --shared
 The default items are `agents`, `commands`, `skills` and `CLAUDE.md`; only the items listed in `shared.items` are linked. multi-claude creates the missing links and remembers which links it created. Turning sharing off removes only those links; links you made yourself are left alone. A real file or directory at a link location is a conflict and is never overwritten.
 
 If you already linked an account to the shared directory by hand, `multi-claude add NAME --shared --adopt` takes those links over without recreating them.
+
+To keep one item out of a single account, for example so that it has its own `skills`:
+
+```sh
+multi-claude add work --shared-exclude skills    # removes the skills link multi-claude created
+multi-claude add work --shared-include skills    # links it again
+```
+
+The other items stay shared, and the shared directory is not touched. A directory or link you put there yourself is left alone. `list` shows `yes (not: skills)`. With `apply -f`, an account without `shared_exclude` in the file shares every item again.
+
+Items that hold one account's own state cannot be shared: `.credentials.json`, `.claude.json`, `settings.local.json`, `projects`, `history.jsonl`, `file-history`, `sessions`, `session-env`, `shell-snapshots` and `todos` (in any letter case). A configuration that lists one of them in `shared.items` is rejected.
 
 **`skills/synced/`.** Claude Code stores skills synced from claude.ai in `skills/synced/`, one bucket per organization and account. If an account's `skills` is a real directory, turning sharing on is a conflict and multi-claude does not move anything. You may move the account's `skills/synced/<bucket>` into the shared directory's `skills/synced/` yourself: buckets of different accounts have different names and do not collide, but from then on that account's synced skills are written to the shared directory.
 

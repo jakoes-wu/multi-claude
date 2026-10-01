@@ -18,8 +18,8 @@ from . import (__version__, accounts, completion, doctor, identity, migrate, pla
                usage)
 from .actions import error, info, warn
 from .config import (DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError, RouteRule,
-                     load_config, normalize_proxy, parse_config, validate_env_key, validate_name, validate_route_path,
-                     validate_value)
+                     is_unshareable, load_config, normalize_proxy, parse_config, validate_env_key, validate_name,
+                     validate_route_path, validate_value)
 from .env import account_env
 from .fsutil import expand
 from .lock import LockBusyError, WriteLock
@@ -73,6 +73,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_add.add_argument("--adopt", action="store_true",
                        help="take over existing links that already point to the shared items, "
                             "so that turning sharing off later removes them too")
+    p_add.add_argument("--shared-exclude", action="append", default=[], metavar="ITEM",
+                       help="do not link this shared item into the account (repeatable); "
+                            "the link multi-claude made is removed")
+    p_add.add_argument("--shared-include", action="append", default=[], metavar="ITEM",
+                       help="undo --shared-exclude for this item (repeatable)")
     _add_dry_run(p_add)
 
     p_proxy = sub.add_parser("proxy", help="set the proxy of an account")
@@ -333,6 +338,10 @@ def dispatch(args: argparse.Namespace) -> int:
             items = [item.strip() for item in args.shared_items.split(",") if item.strip()]
             if any(item in (".", "..") or "/" in item for item in items):
                 raise UsageError("--shared-items must be plain names without '/'")
+            unshareable = [item for item in items if is_unshareable(item)]
+            if unshareable:
+                raise UsageError("--shared-items must not include {}: it holds account-specific state".format(
+                    ", ".join(unshareable)))
             new.shared_items = items
     elif args.command == "add":
         name = _checked_name(args.name)
@@ -347,6 +356,7 @@ def dispatch(args: argparse.Namespace) -> int:
             account.proxy = _checked_proxy(args.proxy)
         if args.shared is not None:
             account.shared = args.shared
+        _apply_shared_exclude(new, account, args.shared_exclude, args.shared_include)
         if args.adopt:
             # 接管只对开启了共享的账号有意义；关闭状态下工具本来就不管这些软链。
             if not account.shared:
@@ -412,6 +422,24 @@ def dispatch(args: argparse.Namespace) -> int:
         if adopted_dir is not None:
             _warn_if_not_logged_in(adopted_dir)
     return code
+
+
+def _apply_shared_exclude(config: Config, account: Account, exclude: List[str], include: List[str]) -> None:
+    """add 的 --shared-exclude / --shared-include：先撤销再排除。只改配置，链接由随后的收敛计划处理。"""
+    for item in exclude + include:
+        if item in (".", "..") or "/" in item or not item:
+            raise UsageError("shared items must be plain names without '/': {!r}".format(item))
+    both = sorted(set(exclude) & set(include))
+    if both:
+        raise UsageError("{} given to both --shared-exclude and --shared-include".format(", ".join(both)))
+    account.shared_exclude = [item for item in account.shared_exclude if item not in include]
+    for item in exclude:
+        if item not in account.shared_exclude:
+            account.shared_exclude.append(item)
+        if item not in config.shared_items:
+            info("note: {} is not in shared.items; it takes effect only if added there".format(item))
+    if exclude and not account.shared:
+        info("note: sharing is off for {}; the exclusion applies once it is turned on".format(account.name))
 
 
 def _apply_route_args(args: argparse.Namespace, new: Config) -> None:
@@ -672,7 +700,7 @@ def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = Fa
         if entry["identity"] == IDENTITY_DEFAULT:
             default_account = entry["name"]
         rows.append((entry["name"], entry["identity"], "ok" if entry["dir_exists"] else "missing-dir",
-                     entry["proxy"], "yes" if entry["shared"] else "no", entry["launcher"], entry["login"],
+                     entry["proxy"], _shared_cell(entry), entry["launcher"], entry["login"],
                      entry["link"] or "-"))
         if verbose:
             details.append("  {}: keychain service {!r}, credentials file {}".format(
@@ -695,6 +723,14 @@ def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = Fa
     return accounts.EXIT_OK
 
 
+def _shared_cell(entry: dict) -> str:
+    if not entry["shared"]:
+        return "no"
+    if entry["shared_exclude"]:
+        return "yes (not: {})".format(",".join(entry["shared_exclude"]))
+    return "yes"
+
+
 def _account_entries(config: Config, with_usage: bool = False) -> List[dict]:
     """list 的表格与 JSON 共用的每账号数据；表格的列取自这里，保证两种输出口径一致。"""
     now = datetime.now(timezone.utc)
@@ -709,6 +745,7 @@ def _account_entries(config: Config, with_usage: bool = False) -> List[dict]:
             "dir_exists": os.path.isdir(directory),
             "proxy": account.proxy,
             "shared": account.shared,
+            "shared_exclude": list(account.shared_exclude),
             "launcher": accounts.launcher_status(config, name),
             "login": identity.probe(account.identity, directory),
             "link": accounts.default_link_status(config, account) if is_default else None,

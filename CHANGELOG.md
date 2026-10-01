@@ -36,6 +36,9 @@ All notable changes to this project are documented here. The format follows
   account and print `cd … && claude-<target> --resume <id>`. Inside a
   Claude session it takes the current session; a different copy already in
   the target is refused (exit 3) unless `--force` backs it up first.
+- `add NAME --shared-exclude ITEM` / `--shared-include ITEM`: keep a shared
+  item out of one account (the link multi-claude made is removed) or undo
+  it. Accounts gain an optional `shared_exclude`; `list` shows it.
 
 ### Changed
 
@@ -43,6 +46,11 @@ All notable changes to this project are documented here. The format follows
   `CLAUDE_CODE_OAUTH_TOKEN` and `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`, so a
   credential exported in the shell no longer replaces every account's login.
   Run `multi-claude apply` after upgrading to regenerate existing launchers.
+- `shared.items` and `init --shared-items` reject items that hold one
+  account's own state: `.credentials.json`, `.claude.json`,
+  `settings.local.json`, `projects`, `history.jsonl`, `file-history`,
+  `sessions`, `session-env`, `shell-snapshots` and `todos`. Remove such an
+  item from `config.json` if an older version accepted it.
 
 ## [0.1.0] - 2026-09-30
 

@@ -15,6 +15,15 @@ from .fsutil import atomic_write, expand
 
 CONFIG_VERSION = 1
 DEFAULT_SHARED_ITEMS = ["agents", "commands", "skills", "CLAUDE.md"]
+# 账号私有的状态：凭据、全局状态、会话与历史、运行时状态。共享出去会让一个账号的登录或会话
+# 被所有账号读写，所以不允许出现在 shared.items 里（方案 feature-shared-exclude §5.1.4）。
+UNSHAREABLE_ITEMS = (".credentials.json", ".claude.json", "settings.local.json", "projects", "history.jsonl",
+                     "file-history", "sessions", "session-env", "shell-snapshots", "todos")
+
+
+def is_unshareable(item: str) -> bool:
+    # macOS 默认文件系统不区分大小写，`Projects` 指向的就是 `projects`。
+    return item.casefold() in {name.casefold() for name in UNSHAREABLE_ITEMS}
 
 # 以字母或数字开头：不会被当成命令行选项，也不会以 `.` 开头与 `.migration` 等目录混淆。
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@+-]{0,63}$")
@@ -69,7 +78,7 @@ class Account(object):
     def __init__(self, name: str, proxy: str = PROXY_INHERIT, shared: bool = False,
                  managed_links: Optional[List[str]] = None, identity: str = IDENTITY_DIR,
                  env: Optional[Dict[str, str]] = None, args: Optional[List[str]] = None,
-                 dir: Optional[str] = None) -> None:
+                 dir: Optional[str] = None, shared_exclude: Optional[List[str]] = None) -> None:
         self.name = name
         # 账号目录在根目录下的名字。缺省等于账号名；rename 只改 name、不改 dir，
         # 目录路径不变，macOS 上按路径绑定的登录就不会丢（方案 feature-rename-mcp §3）。
@@ -77,13 +86,15 @@ class Account(object):
         self.proxy = proxy
         self.shared = shared
         self.managed_links = list(managed_links or [])
+        # 共享开启时仍不链接的项（用户配置，apply -f 按文件生效）；本工具建过的这些项的链接会被删除。
+        self.shared_exclude = list(shared_exclude or [])
         self.identity = identity
         self.env = dict(env or {})
         self.args = list(args or [])
 
     def copy(self) -> "Account":
         return Account(self.name, self.proxy, self.shared, list(self.managed_links), self.identity,
-                       dict(self.env), list(self.args), self.dir)
+                       dict(self.env), list(self.args), self.dir, list(self.shared_exclude))
 
     def to_dict(self) -> dict:
         data = {"identity": self.identity, "proxy": self.proxy, "shared": self.shared,
@@ -91,6 +102,9 @@ class Account(object):
         # 只在与账号名不同时写出：没改过名的账号，配置内容与 v0.2 逐字相同。
         if self.dir != self.name:
             data["dir"] = self.dir
+        # 同理只在非空时写出，没有退出项的账号配置内容不变。
+        if self.shared_exclude:
+            data["shared_exclude"] = list(self.shared_exclude)
         return data
 
 
@@ -219,6 +233,10 @@ def parse_config(raw: str, source: str) -> Config:
     shared_items = shared.get("items", DEFAULT_SHARED_ITEMS)
     if not isinstance(shared_items, list) or not all(_valid_item(item) for item in shared_items):
         raise ConfigError("{}: 'shared.items' must be a list of plain file names".format(source))
+    for item in shared_items:
+        if is_unshareable(item):
+            raise ConfigError("{}: 'shared.items' must not include {}: it holds account-specific state".format(
+                source, item))
 
     launch_defaults = data.get("defaults", {})
     if not isinstance(launch_defaults, dict):
@@ -349,7 +367,19 @@ def _parse_account(name: str, value: object, source: str) -> Account:
     directory = value.get("dir", name)
     if not isinstance(directory, str) or not NAME_PATTERN.match(directory):
         raise ConfigError("{}: 'dir' must be a directory name like an account name".format(where))
-    return Account(name, proxy, shared, links, identity, env, args, directory)
+    exclude = value.get("shared_exclude", [])
+    if not isinstance(exclude, list) or not all(_valid_item(item) for item in exclude):
+        raise ConfigError("{}: 'shared_exclude' must be a list of names".format(where))
+    return Account(name, proxy, shared, links, identity, env, args, directory, _unique(exclude))
+
+
+def _unique(items: List[str]) -> List[str]:
+    """去重并保持首次出现的顺序。"""
+    seen: List[str] = []
+    for item in items:
+        if item not in seen:
+            seen.append(item)
+    return seen
 
 
 def _parse_env(value: object, where: str) -> Dict[str, str]:
