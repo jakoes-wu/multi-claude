@@ -9,7 +9,7 @@ import unittest
 from helpers import CliTestCase
 
 SUBCOMMANDS = ("init", "migrate-default", "add", "proxy", "env", "args", "remove", "apply", "list",
-               "usage", "doctor", "completion")
+               "usage", "doctor", "route", "which", "completion")
 
 
 class CompletionTest(CliTestCase):
@@ -66,6 +66,17 @@ class CompletionTest(CliTestCase):
         self.assertEqual(self.bash_complete("multi-claude completion z"), ["zsh"])
         self.assertEqual(self.bash_complete("multi-claude args a@example.com -- "), [])
         self.assertIn("--proxy", self.bash_complete("multi-claude add x --pro"))
+
+    @unittest.skipUnless(shutil.which("bash"), "bash is not installed")
+    def test_bash_route_and_which(self):
+        self.ok("add", "a@example.com")
+        os.makedirs(os.path.join(self.tmp, "proj-one"))
+        prefix = os.path.join(self.tmp, "proj-")
+        self.assertEqual(self.bash_complete("multi-claude route " + prefix), [prefix + "one"])
+        self.assertEqual(self.bash_complete("multi-claude which " + prefix), [prefix + "one"])
+        self.assertEqual(self.bash_complete("multi-claude route /x "), ["a@example.com"])
+        self.assertEqual(self.bash_complete("multi-claude route --default "), ["a@example.com"])
+        self.assertEqual(self.bash_complete("multi-claude remove "), ["a@example.com"])
 
     def test_completion_ignores_broken_state(self):
         self.write(os.path.join(self.state, "migrate-journal.json"), "{broken")

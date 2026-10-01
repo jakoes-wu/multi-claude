@@ -8,10 +8,10 @@ import json
 import os
 import re
 import urllib.parse
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 from . import platform
-from .fsutil import atomic_write
+from .fsutil import atomic_write, expand
 
 CONFIG_VERSION = 1
 DEFAULT_SHARED_ITEMS = ["agents", "commands", "skills", "CLAUDE.md"]
@@ -51,6 +51,13 @@ class ConfigError(Exception):
     """配置文件内容不合法，对应退出码 1。"""
 
 
+class RouteRule(NamedTuple):
+    """按目录选账号的一条规则：当前目录位于 path 之下时用 account（方案 feature-directory-routing §5.1.1）。"""
+    # 用户写法（如 "~/work"）；比较时经 expand 展开，claude-auto 启动时再求物理路径
+    path: str
+    account: str
+
+
 class Account(object):
     """一个已登记的账号。
 
@@ -82,7 +89,8 @@ class Account(object):
 class Config(object):
     def __init__(self, root: str, bin_dir: str, shared_dir: Optional[str], shared_items: List[str],
                  accounts: Dict[str, Account], defaults_env: Optional[Dict[str, str]] = None,
-                 defaults_args: Optional[List[str]] = None) -> None:
+                 defaults_args: Optional[List[str]] = None, route_rules: Optional[List[RouteRule]] = None,
+                 route_default: Optional[str] = None) -> None:
         self.root = root
         self.bin_dir = bin_dir
         self.shared_dir = shared_dir
@@ -91,6 +99,14 @@ class Config(object):
         self.accounts = accounts
         self.defaults_env = dict(defaults_env or {})
         self.defaults_args = list(defaults_args or [])
+        # 路由规则保持配置中的顺序：两条规则的物理路径相同时，靠前的一条生效。
+        self.route_rules = list(route_rules or [])
+        # 没有规则命中时 claude-auto 使用的账号名；None 表示直接运行 claude。
+        self.route_default = route_default
+
+    @property
+    def routes_enabled(self) -> bool:
+        return bool(self.route_rules) or self.route_default is not None
 
     def find(self, name: str) -> Optional[Account]:
         """按大小写不敏感匹配查找账号。
@@ -123,7 +139,7 @@ class Config(object):
     def copy(self) -> "Config":
         return Config(self.root, self.bin_dir, self.shared_dir, self.shared_items,
                       {key: value.copy() for key, value in self.accounts.items()},
-                      dict(self.defaults_env), list(self.defaults_args))
+                      dict(self.defaults_env), list(self.defaults_args), list(self.route_rules), self.route_default)
 
     def to_dict(self) -> dict:
         return {
@@ -133,6 +149,8 @@ class Config(object):
             "shared": {"dir": self.shared_dir, "items": list(self.shared_items)},
             "defaults": {"env": dict(self.defaults_env), "args": list(self.defaults_args)},
             "accounts": {name: account.to_dict() for name, account in self.accounts.items()},
+            "routes": {"default": self.route_default,
+                       "rules": [{"path": rule.path, "account": rule.account} for rule in self.route_rules]},
         }
 
 
@@ -222,7 +240,52 @@ def parse_config(raw: str, source: str) -> Config:
                     source, default_name, name))
             default_name = name
         accounts[name] = account
-    return Config(root, bin_dir, shared_dir, shared_items, accounts, defaults_env, defaults_args)
+    route_rules, route_default = _parse_routes(data.get("routes", {}), source)
+    return Config(root, bin_dir, shared_dir, shared_items, accounts, defaults_env, defaults_args,
+                  route_rules, route_default)
+
+
+def _parse_routes(value: object, source: str) -> Tuple[List[RouteRule], Optional[str]]:
+    """只校验形状；“规则引用的账号已登记”放到收敛计划里判冲突，remove 与 apply -f 才能得到同样的退出码 3。"""
+    if not isinstance(value, dict):
+        raise ConfigError("{}: 'routes' must be an object".format(source))
+    default = value.get("default")
+    if default is not None and (not isinstance(default, str) or not NAME_PATTERN.match(default)):
+        raise ConfigError("{}: 'routes.default' must be an account name or null".format(source))
+    rules_raw = value.get("rules", [])
+    if not isinstance(rules_raw, list):
+        raise ConfigError("{}: 'routes.rules' must be a list".format(source))
+    rules: List[RouteRule] = []
+    seen = {}
+    for item in rules_raw:
+        if not isinstance(item, dict) or set(item) != {"path", "account"}:
+            raise ConfigError("{}: each route must be an object with exactly 'path' and 'account'".format(source))
+        path, account = item["path"], item["account"]
+        if not isinstance(account, str) or not NAME_PATTERN.match(account):
+            raise ConfigError("{}: route {!r}: invalid account name {!r}".format(source, path, account))
+        try:
+            expanded = validate_route_path(path)
+        except ValueError as exc:
+            raise ConfigError("{}: {}".format(source, exc))
+        if expanded in seen:
+            raise ConfigError("{}: routes {!r} and {!r} point to the same directory".format(
+                source, seen[expanded], path))
+        seen[expanded] = path
+        rules.append(RouteRule(path, account))
+    return rules, default
+
+
+def validate_route_path(path: object) -> str:
+    """规则目录必须是绝对路径（可用 ~）且不是 /；返回 expand 后的路径。"""
+    if not isinstance(path, str) or not path:
+        raise ValueError("route path must be a non-empty string")
+    if not (path.startswith("/") or path == "~" or path.startswith("~/")):
+        raise ValueError("route path {!r} must be absolute or start with ~/".format(path))
+    validate_value(path)
+    expanded = expand(path)
+    if expanded == "/":
+        raise ValueError("route path must not be / (use `route --default` instead)")
+    return expanded
 
 
 def _string_field(data: dict, key: str, default: str, source: str) -> str:

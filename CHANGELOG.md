@@ -16,6 +16,10 @@ All notable changes to this project are documented here. The format follows
   login-overriding variables, with a fix for each problem; `--json` output.
 - `completion bash|zsh|fish`.
 - `list --json` (includes usage) and `list --names`.
+- `route` and `which`: choose an account by directory. Routes generate
+  `claude-auto`, which starts the account of the longest matching directory
+  (physical paths), falls back to an optional default account and then to
+  plain `claude`. `list`, `doctor` and completion cover routes.
 
 ### Changed
 

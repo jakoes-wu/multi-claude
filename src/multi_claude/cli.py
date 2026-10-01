@@ -11,10 +11,11 @@ import sys
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
-from . import __version__, accounts, completion, doctor, identity, migrate, platform, usage
+from . import __version__, accounts, completion, doctor, identity, migrate, platform, routes, usage
 from .actions import error, info, warn
-from .config import (DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError,
-                     load_config, normalize_proxy, parse_config, validate_env_key, validate_name, validate_value)
+from .config import (DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError, RouteRule,
+                     load_config, normalize_proxy, parse_config, validate_env_key, validate_name, validate_route_path,
+                     validate_value)
 from .fsutil import expand
 from .lock import LockBusyError, WriteLock
 
@@ -111,6 +112,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor.add_argument("--json", action="store_true", help="print machine-readable JSON")
     p_doctor.add_argument("--verbose", action="store_true", help="also list the checks that passed")
 
+    p_route = sub.add_parser("route", help="choose an account by directory for claude-auto: route DIR NAME, "
+                                           "route DIR --remove, route --default NAME, route --no-default")
+    p_route.add_argument("path", nargs="?", metavar="DIR")
+    p_route.add_argument("name", nargs="?", metavar="NAME")
+    route_mode = p_route.add_mutually_exclusive_group()
+    route_mode.add_argument("--remove", action="store_true", help="remove the route of DIR")
+    route_mode.add_argument("--default", metavar="NAME", help="account used when no route matches")
+    route_mode.add_argument("--no-default", action="store_true",
+                            help="run plain claude when no route matches (the initial behaviour)")
+    _add_dry_run(p_route)
+
+    p_which = sub.add_parser("which", help="show which account claude-auto would use in DIR (default: here)")
+    p_which.add_argument("path", nargs="?", metavar="DIR")
+
     p_completion = sub.add_parser("completion", help="print a shell completion script")
     p_completion.add_argument("shell", choices=completion.SHELLS)
     return parser
@@ -183,6 +198,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             return cmd_list(verbose=args.verbose, as_json=args.json, names_only=args.names)
         if args.command == "usage":
             return cmd_usage(args.name, args.json)
+        if args.command == "which":
+            return cmd_which(args.path)
         if _blocked_by_migration(args, notice):
             return accounts.EXIT_ERROR
         with WriteLock():
@@ -297,6 +314,8 @@ def dispatch(args: argparse.Namespace) -> int:
             account = _registered(new, _checked_name(args.name))
             account.args = launch_args
             warn_names = [account.name]
+    elif args.command == "route":
+        _apply_route_args(args, new)
     elif args.command == "remove":
         name = _checked_name(args.name)
         account = new.find(name)
@@ -318,6 +337,65 @@ def dispatch(args: argparse.Namespace) -> int:
         if adopted_dir is not None:
             _warn_if_not_logged_in(adopted_dir)
     return code
+
+
+def _apply_route_args(args: argparse.Namespace, new: Config) -> None:
+    """route 的四种形式（互斥）：DIR NAME、DIR --remove、--default NAME、--no-default。"""
+    if args.default is not None or args.no_default:
+        if args.path is not None or args.name is not None:
+            raise UsageError("--default and --no-default do not take DIR or NAME")
+        if args.no_default:
+            new.route_default = None
+            return
+        new.route_default = _registered(new, _checked_name(args.default)).name
+        return
+    if args.path is None:
+        raise UsageError("route needs DIR NAME, DIR --remove, --default NAME or --no-default")
+    path = routes.normalize_path(args.path, os.getcwd())
+    try:
+        expanded = validate_route_path(path)
+    except ValueError as exc:
+        raise UsageError(str(exc))
+    existing = [index for index, rule in enumerate(new.route_rules) if expand(rule.path) == expanded]
+    if args.remove:
+        if args.name is not None:
+            raise UsageError("route DIR --remove does not take NAME")
+        if not existing:
+            info("{} has no route".format(path))
+        new.route_rules = [rule for rule in new.route_rules if expand(rule.path) != expanded]
+        return
+    if args.name is None:
+        raise UsageError("route DIR needs NAME (or --remove)")
+    account = _registered(new, _checked_name(args.name))
+    if not os.path.isdir(expanded):
+        warn("{} does not exist; the route is ignored until it does".format(path))
+    rule = RouteRule(path, account.name)
+    if existing:
+        # 改指已有规则时保留它在列表中的位置：位置决定“物理路径相同的两条规则”谁生效。
+        new.route_rules[existing[0]] = RouteRule(new.route_rules[existing[0]].path, account.name)
+    else:
+        new.route_rules.append(rule)
+
+
+def cmd_which(path: Optional[str]) -> int:
+    """只读：显示 DIR 下运行 claude-auto 会用哪个账号；与 claude-auto 使用同一判定规则。"""
+    directory = os.path.abspath(os.path.expanduser(path)) if path else os.getcwd()
+    if not os.path.isdir(directory):
+        error("{} is not a directory".format(directory))
+        return accounts.EXIT_ERROR
+    config, _ = load_config()
+    account, rule = routes.resolve(config, directory)
+    if account is not None and rule is not None:
+        print("{} (route {})".format(account.name, rule.path))
+    elif account is not None:
+        print("{} (default)".format(account.name))
+    elif rule is not None or config.route_default is not None:
+        # 规则或默认账号引用了未登记的账号：只会出现在手工改过的配置里。
+        print("{} (not registered; run `multi-claude doctor`)".format(rule.account if rule else config.route_default))
+        return accounts.EXIT_ERROR
+    else:
+        print("claude (no route, no default)")
+    return accounts.EXIT_OK
 
 
 class _NotRegistered(Exception):
@@ -392,6 +470,7 @@ def _load_apply_file(path: str, old: Config) -> Config:
     except OSError as exc:
         raise ConfigError("cannot read {}: {}".format(path, exc))
     new = parse_config(raw, path)
+    skipped = set()
     for name, account in list(new.accounts.items()):
         current = old.find(account.name)
         if current is not None:
@@ -402,8 +481,19 @@ def _load_apply_file(path: str, old: Config) -> Config:
             info("skip account {0} (identity is default; run multi-claude migrate-default {0} to create it, "
                  "then set its proxy/env/args/shared again)".format(account.name))
             del new.accounts[name]
+            skipped.add(name.casefold())
             continue
         account.managed_links = []
+    # 引用被跳过账号的路由一并跳过：否则整条 apply 会因“规则引用未登记账号”判冲突，
+    # 带路由的配置文件就无法在新机器上使用。迁移完成后由用户重新设置。
+    for rule in [rule for rule in new.route_rules if rule.account.casefold() in skipped]:
+        info("skip route {} (account {} is skipped; set it again with `multi-claude route {} {}`)".format(
+            rule.path, rule.account, rule.path, rule.account))
+        new.route_rules.remove(rule)
+    if new.route_default is not None and new.route_default.casefold() in skipped:
+        info("skip default route (account {0} is skipped; set it again with "
+             "`multi-claude route --default {0}`)".format(new.route_default))
+        new.route_default = None
     return new
 
 
@@ -465,6 +555,12 @@ def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = Fa
     widths = [max(len(row[index]) for row in rows) for index in range(len(rows[0]))]
     for row in rows:
         print("  ".join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip())
+    if config.routes_enabled:
+        print("routes:")
+        for rule in config.route_rules:
+            print("  {} -> {}".format(rule.path, rule.account))
+        if config.route_default is not None:
+            print("  (default) -> {}".format(config.route_default))
     if default_account is not None:
         print("note: {} keeps its global state in {} (not moved by migrate-default)".format(
             default_account, os.path.join(os.path.expanduser("~"), ".claude.json")))
@@ -503,7 +599,8 @@ def _account_entries(config: Config, with_usage: bool = False) -> List[dict]:
 
 def _list_data(config: Config, exists: bool) -> dict:
     if not exists:
-        return {"schema_version": 1, "configured": False, "accounts": []}
+        return {"schema_version": 1, "configured": False, "accounts": [],
+                "routes": {"default": None, "rules": []}}
     return {
         "schema_version": 1,
         "configured": True,
@@ -511,6 +608,9 @@ def _list_data(config: Config, exists: bool) -> dict:
         "bin_dir": expand(config.bin_dir),
         "shared_dir": expand(config.shared_dir) if config.shared_dir else None,
         "accounts": _account_entries(config, with_usage=True),
+        "routes": {"default": config.route_default,
+                   "rules": [{"path": rule.path, "account": rule.account, "exists": os.path.isdir(expand(rule.path))}
+                             for rule in config.route_rules]},
     }
 
 

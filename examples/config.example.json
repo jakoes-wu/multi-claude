@@ -15,5 +15,9 @@
     "work": {"proxy": "http://127.0.0.1:7901", "shared": true, "args": ["--permission-mode", "acceptEdits"]},
     "personal": {"proxy": "inherit", "shared": false, "env": {"MAX_THINKING_TOKENS": "8000"}},
     "offline-proxy-test": {"proxy": "off"}
+  },
+  "routes": {
+    "default": "main",
+    "rules": [{"path": "~/work", "account": "work"}]
   }
 }

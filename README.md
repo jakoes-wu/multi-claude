@@ -82,6 +82,8 @@ multi-claude list
 | `multi-claude list [--verbose \| --json \| --names]` | Show accounts, launchers and login state. `--json` adds usage and is meant for scripts; `--names` prints only the names. |
 | `multi-claude usage [NAME] [--json]` | Show the last known 5-hour and 7-day usage of each account. |
 | `multi-claude doctor [--json] [--verbose]` | Check the configuration, launchers, account directories, shared links, logins and environment. |
+| `multi-claude route DIR NAME`, `route DIR --remove`, `route --default NAME`, `route --no-default` | Choose an account by directory for `claude-auto`. |
+| `multi-claude which [DIR]` | Show which account `claude-auto` would use in `DIR` (default: the current directory). |
 | `multi-claude completion bash\|zsh\|fish` | Print a shell completion script. |
 
 Every write command accepts `--dry-run`. `env`, `args`, `proxy` and `usage NAME` return 1 for an account that is not registered.
@@ -143,6 +145,22 @@ home   -          -        no data (start claude-home once)
 
 The numbers are the last values Claude Code itself cached in the account's `.claude.json` (for the default identity, `~/.claude.json`). multi-claude never reads credentials and never calls the network, so the data can be old: `UPDATED` shows its age, and values older than an hour are marked `stale`. Claude Code writes this cache itself; when it refreshes it is not documented. A window whose reset time has passed shows `reset`.
 
+### Choosing an account by directory
+
+```sh
+multi-claude route ~/work work           # anything under ~/work uses claude-work
+multi-claude route ~/work/client-a ca    # the longest matching directory wins
+multi-claude route --default main        # optional: used when no route matches
+claude-auto                              # start Claude Code with the account for this directory
+multi-claude which                       # show the choice without starting anything
+```
+
+Routes live in `config.json` and generate `~/.local/bin/claude-auto`. It compares physical paths (symbolic links are resolved), so `~/work` does not match `~/workshop`, and a route whose directory does not exist is ignored. When no route matches and no default is set, `claude-auto` runs plain `claude`. Arguments are passed through: `claude-auto -p "hello"`.
+
+Because `claude-auto` is a launcher name, an account cannot be called `auto` while routes exist, and an account cannot be removed while a route still uses it (both are conflicts, exit code 3). `claude-auto` does not change your shell; add `alias claude=claude-auto` yourself if you want plain `claude` to follow the routes.
+
+Downgrading to a version without routes keeps working with the configuration, but its next write drops the `routes` section and leaves `claude-auto` behind; remove the routes (or delete `claude-auto`) before downgrading.
+
 ### Diagnostics and completion
 
 `multi-claude doctor` checks, without changing anything: the configuration and any unfinished migration, whether `claude` and the launcher directory are on `PATH`, whether each launcher is up to date and not hidden by another file of the same name, whether each account directory exists and is private (`0700`), the default account's link, broken shared links, whether a login exists, and variables such as `ANTHROPIC_API_KEY` that override the accounts' logins. Every problem comes with the command that fixes it. It exits with 1 when there is an error; `--json` prints the results for scripts.
@@ -179,7 +197,7 @@ multi-claude apply -f accounts.json
 
 `apply -f` replaces the configuration with the file. Accounts missing from the file are unregistered (their directories are kept). If anything conflicts, nothing is written at all.
 
-`identity` is internal state and only `migrate-default` changes it. For a registered account, `identity` in the file is ignored. An account that is not registered yet but has `"identity": "default"` is skipped with a message: run `multi-claude migrate-default <name>` on that machine, then set its proxy, environment variables, arguments and sharing again.
+`identity` is internal state and only `migrate-default` changes it. For a registered account, `identity` in the file is ignored. An account that is not registered yet but has `"identity": "default"` is skipped with a message: run `multi-claude migrate-default <name>` on that machine, then set its proxy, environment variables, arguments and sharing again. Routes that use the skipped account (including the default route) are skipped as well, each with a message; set them again with `multi-claude route`.
 
 ## Migrating `~/.claude`
 

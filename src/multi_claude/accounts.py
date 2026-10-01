@@ -19,7 +19,7 @@ import json
 import os
 from typing import FrozenSet, Iterable, List, Optional, Set, Tuple, Union
 
-from . import launcher, platform, shared
+from . import launcher, platform, routes, shared
 from .actions import (CONFLICT, CREATE, DELETE, SKIP, UNCHANGED, UPDATE, Action, error,
                       has_conflict, info, print_action, warn)
 from .config import (IDENTITY_DEFAULT, PROXY_INHERIT, PROXY_VARS, Account, Config, config_path,
@@ -111,10 +111,54 @@ def plan(old: Config, new: Config, *, config_exists: bool = True,
                 actions.extend(_plan_launcher_delete(new_bin, name, planned_deletes,
                                                      "orphan launcher", path=path))
 
+    actions.extend(_plan_router(old, new))
+
     config_changed = not config_exists or dump_config(old) != dump_config(new)
     config_action = Action(CREATE if not config_exists else (UPDATE if config_changed else UNCHANGED),
                            "config", config_path())
     return [config_action] + actions
+
+
+def _plan_router(old: Config, new: Config) -> List[Action]:
+    """路由入口 claude-auto 的动作与冲突（方案 feature-directory-routing §5.1.3）。
+
+    只认路由标记：账号启动命令、用户自己的同名文件一律不覆盖、不删除。
+    """
+    actions: List[Action] = []
+    new_path = routes.router_path(new.bin_dir)
+    old_path = routes.router_path(old.bin_dir)
+    if old_path != new_path and routes.is_router(old_path):
+        actions.append(Action(DELETE, "router", old_path, "bin_dir changed", lambda: os.unlink(old_path)))
+    if not new.routes_enabled:
+        if routes.is_router(new_path):
+            actions.append(Action(DELETE, "router", new_path, "no routes configured", lambda: os.unlink(new_path)))
+        return actions
+
+    referenced = [(rule.account, "route {} uses account {!r}, which is not registered; run "
+                                 "`multi-claude route {} --remove` first".format(rule.path, rule.account, rule.path))
+                  for rule in new.route_rules]
+    if new.route_default is not None:
+        referenced.append((new.route_default, "the default route uses account {!r}, which is not registered; "
+                                              "run `multi-claude route --no-default` first".format(new.route_default)))
+    for name, reason in referenced:
+        if new.find(name) is None:
+            actions.append(Action(CONFLICT, "config", config_path(), reason))
+    if new.find(routes.RESERVED_ACCOUNT) is not None:
+        # 账号 auto 的启动命令也叫 claude-auto，两者必然互相覆盖。
+        actions.append(Action(CONFLICT, "router", new_path, "claude-auto is the directory router; an account "
+                                                             "named 'auto' cannot coexist with routes"))
+
+    content = routes.render_router(new)
+    kind = entry_kind(new_path)
+    if kind == KIND_MISSING:
+        actions.append(Action(CREATE, "router", new_path, run=_write_launcher(new_path, content)))
+    elif not routes.is_router(new_path):
+        actions.append(Action(CONFLICT, "router", new_path, "already exists and is not the multi-claude router"))
+    elif read_text(new_path) == content and os.access(new_path, os.X_OK):
+        actions.append(Action(UNCHANGED, "router", new_path))
+    else:
+        actions.append(Action(UPDATE, "router", new_path, run=_write_launcher(new_path, content)))
+    return actions
 
 
 def _plan_account_dir(directory: str, account: Account, assumed: Set[str]) -> List[Action]:
