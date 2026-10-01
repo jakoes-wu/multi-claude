@@ -86,6 +86,7 @@ multi-claude list
 | `multi-claude which [DIR]` | Show which account `claude-auto` would use in `DIR` (default: the current directory). |
 | `multi-claude rename OLD NEW` | Rename an account and its launcher. The directory and the login stay. |
 | `multi-claude mcp NAME [ARG ...]` | Run `claude mcp ARG ...` as that account. |
+| `multi-claude handoff TARGET [--from NAME] [--session ID] [--force]` | Copy a session to another account and print the command that resumes it there. |
 | `multi-claude statusline install\|uninstall FILE` | Wrap the statusLine command in a settings file so that `usage` gets fresh numbers, or restore it. |
 | `multi-claude completion bash\|zsh\|fish` | Print a shell completion script. |
 
@@ -187,6 +188,21 @@ multi-claude mcp client-a list
 `rename` keeps the account's directory, so the login is not affected; routes follow the new name. Update your own aliases and scripts that call the old launcher name. Downgrading to a version without `rename` while a renamed account exists is unsafe to write with: the older version reports a conflict instead of changing the launcher.
 
 `mcp` runs `claude mcp ...` with the account's configuration directory, proxy and extra environment variables, but without its fixed arguments (options such as `--allowedTools` would otherwise swallow the `mcp` subcommand). Claude Code itself writes the server configuration. Use `--scope user` for a server that should be available in every project of that account.
+
+### Handing a session over to another account
+
+Each account keeps its own sessions, so `claude --resume` in one account cannot see the sessions of another. `handoff` copies one session (its `.jsonl` file and the folder next to it with subagent transcripts and saved tool output) into the same project folder of another account:
+
+```sh
+# inside a Claude session of account work:
+! multi-claude handoff home
+# [multi-claude] continue with: cd '/path/to/project' && claude-home --resume 0f3c…
+```
+
+- Inside a Claude session (run with `!`), it copies the current session of the current account. In an ordinary terminal, name the account with `--from`; it then copies the latest session of the current directory. `--session ID` picks another session.
+- Nothing is moved or deleted, and the source account is only read. A line that is still being written is left out. Later messages in the source account are not synchronised.
+- If the target already has the same session with different content, `handoff` stops with exit code 3. `--force` renames the existing copy to `*.multi-claude-bak.*` and copies again; close that session in the target account first.
+- `/rewind` snapshots (`file-history`) and project memory are not copied.
 
 ### Diagnostics and completion
 

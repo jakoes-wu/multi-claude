@@ -86,6 +86,7 @@ multi-claude list
 | `multi-claude which [目录]` | 显示 `claude-auto` 在该目录（默认当前目录）会用哪个账号 |
 | `multi-claude rename 旧名 新名` | 给账号及其启动命令改名，目录与登录不变 |
 | `multi-claude mcp 名称 [参数 ...]` | 以该账号的身份运行 `claude mcp 参数 ...` |
+| `multi-claude handoff 目标 [--from 名称] [--session ID] [--force]` | 把一条会话复制到另一个账号，并打印在那边续聊的命令 |
 | `multi-claude statusline install\|uninstall 文件` | 包装设置文件里的 statusLine 命令，让 `usage` 拿到更新的数值；或还原它 |
 | `multi-claude completion bash\|zsh\|fish` | 输出 shell 补全脚本 |
 
@@ -187,6 +188,21 @@ multi-claude mcp client-a list
 `rename` 保留账号目录，登录不受影响，路由规则会跟着改名。你自己的别名或脚本里用到旧启动命令名的，需要自行更新。存在改过名的账号时不要降级后执行写命令：旧版本会报冲突，不会改写启动命令。
 
 `mcp` 用该账号的配置目录、代理和额外环境变量运行 `claude mcp ...`，但不带它的固定参数（否则 `--allowedTools` 这类选项会把 `mcp` 子命令吞掉）。服务器配置由 Claude Code 自己写入。希望该账号所有项目都能用的服务器，请加 `--scope user`。
+
+### 把会话交给另一个账号
+
+每个账号的会话各自存放，在一个账号里 `claude --resume` 看不到另一个账号的会话。`handoff` 把一条会话（`.jsonl` 文件以及旁边存放子代理记录和工具输出的同名目录）复制到另一个账号的同一项目目录下：
+
+```sh
+# 在账号 work 的 Claude 会话里：
+! multi-claude handoff home
+# [multi-claude] continue with: cd '/path/to/project' && claude-home --resume 0f3c…
+```
+
+- 在 Claude 会话里用 `!` 运行时，复制的是当前账号的当前会话；在普通终端里需要用 `--from` 指定账号，复制当前目录里最新的一条会话。`--session ID` 可指定别的会话。
+- 不移动、不删除任何东西，来源账号只读；还在写入的半行不会复制。来源账号之后的新消息不会同步过去。
+- 目标里已有内容不同的同一会话时，`handoff` 以退出码 3 停下；加 `--force` 会先把已有的那份改名为 `*.multi-claude-bak.*` 再复制，之前请先关掉目标账号里的这条会话。
+- 不复制 `/rewind` 用的快照（`file-history`）和项目记忆。
 
 ### 诊断与补全
 
