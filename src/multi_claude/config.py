@@ -68,8 +68,12 @@ class Account(object):
 
     def __init__(self, name: str, proxy: str = PROXY_INHERIT, shared: bool = False,
                  managed_links: Optional[List[str]] = None, identity: str = IDENTITY_DIR,
-                 env: Optional[Dict[str, str]] = None, args: Optional[List[str]] = None) -> None:
+                 env: Optional[Dict[str, str]] = None, args: Optional[List[str]] = None,
+                 dir: Optional[str] = None) -> None:
         self.name = name
+        # 账号目录在根目录下的名字。缺省等于账号名；rename 只改 name、不改 dir，
+        # 目录路径不变，macOS 上按路径绑定的登录就不会丢（方案 feature-rename-mcp §3）。
+        self.dir = dir or name
         self.proxy = proxy
         self.shared = shared
         self.managed_links = list(managed_links or [])
@@ -79,11 +83,15 @@ class Account(object):
 
     def copy(self) -> "Account":
         return Account(self.name, self.proxy, self.shared, list(self.managed_links), self.identity,
-                       dict(self.env), list(self.args))
+                       dict(self.env), list(self.args), self.dir)
 
     def to_dict(self) -> dict:
-        return {"identity": self.identity, "proxy": self.proxy, "shared": self.shared,
+        data = {"identity": self.identity, "proxy": self.proxy, "shared": self.shared,
                 "managed_links": list(self.managed_links), "env": dict(self.env), "args": list(self.args)}
+        # 只在与账号名不同时写出：没改过名的账号，配置内容与 v0.2 逐字相同。
+        if self.dir != self.name:
+            data["dir"] = self.dir
+        return data
 
 
 class Config(object):
@@ -240,9 +248,26 @@ def parse_config(raw: str, source: str) -> Config:
                     source, default_name, name))
             default_name = name
         accounts[name] = account
+    _check_dirs(accounts, source)
     route_rules, route_default = _parse_routes(data.get("routes", {}), source)
     return Config(root, bin_dir, shared_dir, shared_items, accounts, defaults_env, defaults_args,
                   route_rules, route_default)
+
+
+def _check_dirs(accounts: Dict[str, Account], source: str) -> None:
+    """账号目录互不相同，且账号名不能等于另一个账号的目录（否则新账号会落进别人的目录）。"""
+    owners: Dict[str, str] = {}
+    for account in accounts.values():
+        folded = account.dir.casefold()
+        if folded in owners:
+            raise ConfigError("{}: accounts {!r} and {!r} use the same directory {!r}".format(
+                source, owners[folded], account.name, account.dir))
+        owners[folded] = account.name
+    for account in accounts.values():
+        owner = owners.get(account.name.casefold())
+        if owner is not None and owner != account.name:
+            raise ConfigError("{}: account {!r} has the name of the directory of account {!r}".format(
+                source, account.name, owner))
 
 
 def _parse_routes(value: object, source: str) -> Tuple[List[RouteRule], Optional[str]]:
@@ -321,7 +346,10 @@ def _parse_account(name: str, value: object, source: str) -> Account:
     where = "{}: account {!r}".format(source, name)
     env = _parse_env(value.get("env", {}), where + " env")
     args = _parse_args(value.get("args", []), where + " args")
-    return Account(name, proxy, shared, links, identity, env, args)
+    directory = value.get("dir", name)
+    if not isinstance(directory, str) or not NAME_PATTERN.match(directory):
+        raise ConfigError("{}: 'dir' must be a directory name like an account name".format(where))
+    return Account(name, proxy, shared, links, identity, env, args, directory)
 
 
 def _parse_env(value: object, where: str) -> Dict[str, str]:

@@ -9,7 +9,7 @@ import unittest
 from helpers import CliTestCase
 
 SUBCOMMANDS = ("init", "migrate-default", "add", "proxy", "env", "args", "remove", "apply", "list",
-               "usage", "doctor", "route", "which", "completion")
+               "usage", "doctor", "route", "which", "rename", "mcp", "completion")
 
 
 class CompletionTest(CliTestCase):
@@ -77,6 +77,8 @@ class CompletionTest(CliTestCase):
         self.assertEqual(self.bash_complete("multi-claude route /x "), ["a@example.com"])
         self.assertEqual(self.bash_complete("multi-claude route --default "), ["a@example.com"])
         self.assertEqual(self.bash_complete("multi-claude remove "), ["a@example.com"])
+        self.assertEqual(self.bash_complete("multi-claude rename "), ["a@example.com"])
+        self.assertEqual(self.bash_complete("multi-claude mcp "), ["a@example.com"])
 
     def test_completion_ignores_broken_state(self):
         self.write(os.path.join(self.state, "migrate-journal.json"), "{broken")

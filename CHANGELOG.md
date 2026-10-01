@@ -20,6 +20,12 @@ All notable changes to this project are documented here. The format follows
   `claude-auto`, which starts the account of the longest matching directory
   (physical paths), falls back to an optional default account and then to
   plain `claude`. `list`, `doctor` and completion cover routes.
+- `rename OLD NEW`: rename an account and its launcher while keeping its
+  directory (accounts gain an optional `dir` field), so the login stays;
+  routes follow the new name.
+- `mcp NAME [ARG ...]`: run `claude mcp` with the account's environment
+  (configuration directory, proxy, extra variables) but without its fixed
+  arguments.
 
 ### Changed
 

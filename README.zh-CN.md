@@ -84,6 +84,8 @@ multi-claude list
 | `multi-claude doctor [--json] [--verbose]` | 检查配置、启动命令、账号目录、共享软链、登录与环境变量 |
 | `multi-claude route 目录 名称`、`route 目录 --remove`、`route --default 名称`、`route --no-default` | 为 `claude-auto` 设置按目录选账号的规则 |
 | `multi-claude which [目录]` | 显示 `claude-auto` 在该目录（默认当前目录）会用哪个账号 |
+| `multi-claude rename 旧名 新名` | 给账号及其启动命令改名，目录与登录不变 |
+| `multi-claude mcp 名称 [参数 ...]` | 以该账号的身份运行 `claude mcp 参数 ...` |
 | `multi-claude completion bash\|zsh\|fish` | 输出 shell 补全脚本 |
 
 所有写命令都支持 `--dry-run`。`env`、`args`、`proxy` 和 `usage 名称` 对未登记的账号返回 1。
@@ -160,6 +162,18 @@ multi-claude which                       # 只显示会选哪个账号，不启�
 由于 `claude-auto` 本身是一个启动命令名，有规则时不能有名为 `auto` 的账号；账号仍被规则引用时也不能删除（都判为冲突，退出码 3）。`claude-auto` 不改动你的 shell 配置；想让裸 `claude` 也按规则选账号，可以自己加 `alias claude=claude-auto`。
 
 降级到不支持路由的版本时，配置仍能读取，但下一次写命令会丢掉 `routes`，`claude-auto` 也会留在原处；降级前请先删除规则（或手工删除 `claude-auto`）。
+
+### 改名与管理 MCP
+
+```sh
+multi-claude rename work client-a          # claude-work 变成 claude-client-a；~/.cc/work 不变
+multi-claude mcp client-a add --scope user github -- npx -y @modelcontextprotocol/server-github
+multi-claude mcp client-a list
+```
+
+`rename` 保留账号目录，登录不受影响，路由规则会跟着改名。你自己的别名或脚本里用到旧启动命令名的，需要自行更新。存在改过名的账号时不要降级后执行写命令：旧版本会报冲突，不会改写启动命令。
+
+`mcp` 用该账号的配置目录、代理和额外环境变量运行 `claude mcp ...`，但不带它的固定参数（否则 `--allowedTools` 这类选项会把 `mcp` 子命令吞掉）。服务器配置由 Claude Code 自己写入。希望该账号所有项目都能用的服务器，请加 `--scope user`。
 
 ### 诊断与补全
 
@@ -243,7 +257,7 @@ multi-claude remove main         # 注销账号
 macOS 上，用 `add` 建立的账号，其登录存放在钥匙串里、名称由账号路径计算得出（`list --verbose` 可以看到）。所以 multi-claude 从不改变已登记账号的路径：
 
 - 已有账号时修改根目录：冲突；
-- 账号改名（哪怕只改大小写）：冲突；
+- `rename 旧名 新名` 只改账号名与启动命令名，目录不变，所以登录不受影响（`list --verbose` 显示实际目录）；只改大小写的改名不支持，账号名也不能等于另一个账号的目录；
 - 已有启动命令里的账号路径会被改成另一个值（例如配置目录和启动命令目录写的是绝对路径，而 `HOME` 变了）：冲突；
 - 在大小写不敏感的文件系统上，磁盘上的目录是 `Work`，却执行 `add work`：冲突，请用 `Work` 登记。
 

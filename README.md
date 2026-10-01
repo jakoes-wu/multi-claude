@@ -84,6 +84,8 @@ multi-claude list
 | `multi-claude doctor [--json] [--verbose]` | Check the configuration, launchers, account directories, shared links, logins and environment. |
 | `multi-claude route DIR NAME`, `route DIR --remove`, `route --default NAME`, `route --no-default` | Choose an account by directory for `claude-auto`. |
 | `multi-claude which [DIR]` | Show which account `claude-auto` would use in `DIR` (default: the current directory). |
+| `multi-claude rename OLD NEW` | Rename an account and its launcher. The directory and the login stay. |
+| `multi-claude mcp NAME [ARG ...]` | Run `claude mcp ARG ...` as that account. |
 | `multi-claude completion bash\|zsh\|fish` | Print a shell completion script. |
 
 Every write command accepts `--dry-run`. `env`, `args`, `proxy` and `usage NAME` return 1 for an account that is not registered.
@@ -160,6 +162,18 @@ Routes live in `config.json` and generate `~/.local/bin/claude-auto`. It compare
 Because `claude-auto` is a launcher name, an account cannot be called `auto` while routes exist, and an account cannot be removed while a route still uses it (both are conflicts, exit code 3). `claude-auto` does not change your shell; add `alias claude=claude-auto` yourself if you want plain `claude` to follow the routes.
 
 Downgrading to a version without routes keeps working with the configuration, but its next write drops the `routes` section and leaves `claude-auto` behind; remove the routes (or delete `claude-auto`) before downgrading.
+
+### Renaming accounts and managing MCP servers
+
+```sh
+multi-claude rename work client-a          # claude-work becomes claude-client-a; ~/.cc/work stays
+multi-claude mcp client-a add --scope user github -- npx -y @modelcontextprotocol/server-github
+multi-claude mcp client-a list
+```
+
+`rename` keeps the account's directory, so the login is not affected; routes follow the new name. Update your own aliases and scripts that call the old launcher name. Downgrading to a version without `rename` while a renamed account exists is unsafe to write with: the older version reports a conflict instead of changing the launcher.
+
+`mcp` runs `claude mcp ...` with the account's configuration directory, proxy and extra environment variables, but without its fixed arguments (options such as `--allowedTools` would otherwise swallow the `mcp` subcommand). Claude Code itself writes the server configuration. Use `--scope user` for a server that should be available in every project of that account.
 
 ### Diagnostics and completion
 
@@ -243,7 +257,7 @@ If a migration stops with an error and you want to abandon it: the error message
 On macOS, the login of an account created with `add` is stored in the keychain under a name derived from the account path (`list --verbose` shows it). Therefore multi-claude never changes the path of a registered account:
 
 - changing the root directory while accounts exist is a conflict;
-- renaming an account, even only its case, is a conflict;
+- `rename OLD NEW` changes only the account name and the launcher name; the directory stays, so the login stays (`list --verbose` shows the directory). Renaming that only changes the letter case is not supported, and an account name cannot be the directory of another account;
 - if an existing launcher would get a different account path (for example because `HOME` changed while the configuration and launcher directories are absolute paths), that is a conflict;
 - on a case-insensitive file system, adding `work` when the directory on disk is `Work` is a conflict; register it as `Work`.
 
