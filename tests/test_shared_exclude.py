@@ -84,7 +84,7 @@ class ExcludeTest(SharedExcludeTestCase):
     def test_t9_list_outputs(self):
         self.ok("add", "w", "--shared", "--shared-exclude", "skills", "--shared-exclude", "agents")
         self.ok("add", "v", "--shared")
-        out = self.ok("list").out
+        out = self.ok("list", "--verbose").out
         self.assertRegex(out, r"\bw\s+dir\s+\S+\s+inherit\s+yes \(not: skills,agents\)")
         self.assertRegex(out, r"\bv\s+dir\s+\S+\s+inherit\s+yes\s")
         entries = {entry["name"]: entry for entry in json.loads(self.ok("list", "--json").out)["accounts"]}

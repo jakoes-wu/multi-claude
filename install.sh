@@ -219,9 +219,27 @@ else
   log "installed ${WRAPPER}"
 fi
 
+# 与 src/multi_claude/shellpath.py 同一张表：按当前 shell 给出可直接粘贴的一行命令，不替用户改配置文件。
+path_command() {
+  case "$BIN_DIR" in *"'"*) return 1 ;; esac
+  case "$(basename "${SHELL:-}")" in
+    zsh) printf "echo 'export PATH=\"%s:\$PATH\"' >> ~/.zshrc" "$BIN_DIR" ;;
+    bash)
+      if [ "$(uname -s)" = "Darwin" ]; then profile=".bash_profile"; else profile=".bashrc"; fi
+      printf "echo 'export PATH=\"%s:\$PATH\"' >> ~/%s" "$BIN_DIR" "$profile" ;;
+    fish) printf "fish_add_path '%s'" "$BIN_DIR" ;;
+    *) return 1 ;;
+  esac
+}
 case ":${PATH}:" in
   *":${BIN_DIR}:"*) ;;
-  *) log "note: ${BIN_DIR} is not on PATH; add it in your shell profile, e.g. export PATH=\"${BIN_DIR}:\$PATH\"" ;;
+  *)
+    if command_text="$(path_command)"; then
+      log "note: ${BIN_DIR} is not on PATH; run: ${command_text}, then open a new terminal"
+    else
+      log "note: ${BIN_DIR} is not on PATH; add it in your shell profile, e.g. export PATH=\"${BIN_DIR}:\$PATH\""
+    fi
+    ;;
 esac
 
 if [ -n "$CONFIG_FILE" ]; then

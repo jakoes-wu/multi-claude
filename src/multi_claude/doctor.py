@@ -7,11 +7,12 @@
 """
 
 import os
+import platform as py_platform
 import shutil
 import stat
 from typing import List, NamedTuple, Optional, Tuple
 
-from . import accounts, identity, launcher, migrate, routes
+from . import accounts, identity, launcher, migrate, routes, shellpath
 from .config import IDENTITY_DEFAULT, Account, Config, ConfigError, load_config
 from .fsutil import expand
 
@@ -128,7 +129,8 @@ def _check_bin_on_path(config: Config) -> Check:
     bin_dir = expand(config.bin_dir)
     if bin_dir not in _path_entries():
         return Check("bin-on-path", LEVEL_WARN, bin_dir,
-                     "the launcher directory is not on PATH; add it to PATH in your shell profile")
+                     "the launcher directory is not on PATH; " + shellpath.path_hint(
+                         bin_dir, os.environ.get("SHELL"), py_platform.system()))
     return Check("bin-on-path", LEVEL_OK, bin_dir, "on PATH")
 
 

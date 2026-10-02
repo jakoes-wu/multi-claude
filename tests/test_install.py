@@ -65,6 +65,21 @@ class InstallTest(CliTestCase):
         self.assertNotIn("/shims/", wrapper)
         self.assertEqual(self.tool("--version").returncode, 0)
 
+    def test_path_hint_names_the_shell_profile(self):
+        """方案 feature-clearer-help T8：安装目录不在 PATH 上时，按 $SHELL 给出可直接粘贴的命令。"""
+        expected = {
+            "/bin/zsh": ">> ~/.zshrc",
+            "/bin/bash": ">> ~/.bash_profile" if sys.platform == "darwin" else ">> ~/.bashrc",
+            "/usr/bin/fish": "fish_add_path '{}'".format(os.path.join(self.prefix, "bin")),
+            "": "add it in your shell profile",
+        }
+        for shell, text in expected.items():
+            with self.subTest(shell=shell):
+                result = self.install(env={"SHELL": shell})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("is not on PATH", result.stdout)
+                self.assertIn(text, result.stdout)
+
     def test_remote_install_from_tarball(self):
         # 从临时目录里的副本运行脚本，确保走的是“下载”分支而不是本地源码。
         script = os.path.join(self.tmp, "install.sh")

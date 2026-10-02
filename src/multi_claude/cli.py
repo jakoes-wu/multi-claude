@@ -8,6 +8,7 @@ import argparse
 import difflib
 import json
 import os
+import platform as py_platform
 import re
 import shlex
 import shutil
@@ -17,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
 from . import (__version__, accounts, completion, doctor, hook, identity, migrate, platform, routes, sessions,
-               statusline, usage)
+               shellpath, statusline, usage)
 from .actions import error, info, warn
 from .config import (DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError, RouteRule,
                      is_unshareable, load_config, normalize_proxy, parse_config, validate_env_key, validate_name,
@@ -35,16 +36,76 @@ class UsageError(Exception):
     """命令行参数不合法，对应退出码 2。"""
 
 
+# (分组标题, [(命令显示名, 说明)])。命令显示名里用逗号并列的每个名字都必须是子命令。
+COMMAND_GROUPS = [
+    ("Getting started", [
+        ("add NAME", "create an account and its launcher claude-NAME"),
+        ("login NAME", "sign in to an account"),
+        ("list", "show accounts, logins and usage"),
+    ]),
+    ("Account settings", [
+        ("proxy, env, args", "set the proxy, extra variables or fixed arguments of a launcher"),
+        ("rename, remove", "rename or unregister an account"),
+        ("migrate-default", "turn the existing ~/.claude into an account"),
+    ]),
+    ("Everyday", [
+        ("usage", "5-hour and 7-day usage of each account"),
+        ("route, which", "choose an account by directory (launcher claude-auto)"),
+        ("handoff", "copy a session to another account"),
+        ("mcp", "run `claude mcp` as an account"),
+    ]),
+    ("Setup and checks", [
+        ("init, apply", "global settings; converge everything to config.json"),
+        ("doctor", "check the setup and suggest fixes"),
+        ("statusline", "record usage from the status line"),
+        ("completion", "print a shell completion script"),
+    ]),
+]
+
+_EXAMPLES = [
+    ("multi-claude add work --proxy 7901", ""),
+    ("multi-claude login work", ""),
+    ("multi-claude route ~/work work", ""),
+    ("multi-claude add --help", "details of one command"),
+]
+
+
+def grouped_command_names() -> List[str]:
+    """COMMAND_GROUPS 里出现的全部子命令名（去掉 NAME 之类的参数占位）。"""
+    names = []
+    for _title, items in COMMAND_GROUPS:
+        for shown, _text in items:
+            for part in shown.split(","):
+                names.append(part.split()[0])
+    return names
+
+
+def _help_epilog() -> str:
+    lines = []
+    for title, items in COMMAND_GROUPS:
+        lines.append("{}:".format(title))
+        for shown, text in items:
+            lines.append("  {:<18}{}".format(shown, text))
+        lines.append("")
+    lines.append("Examples:")
+    for command, text in _EXAMPLES:
+        lines.append("  {:<36}{}".format(command, text).rstrip())
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
+    # 子命令不传 help=，argparse 就不会把它们平铺成一列；改由 epilog 按用途分组列出（方案 feature-clearer-help §5.1.1）。
+    # 新增子命令时必须同时写进 COMMAND_GROUPS，测试会核对两者一致。
     parser = argparse.ArgumentParser(
         prog="multi-claude",
-        description="Manage multiple Claude Code accounts: separate CLAUDE_CONFIG_DIR directories, "
-                    "per-account launchers, proxies, environment variables and arguments.")
+        description="Manage multiple Claude Code accounts: separate CLAUDE_CONFIG_DIR directories,\n"
+                    "per-account launchers, proxies, environment variables and arguments.",
+        epilog=_help_epilog(), formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--version", action="version", version="%(prog)s " + __version__)
-    sub = parser.add_subparsers(dest="command", metavar="COMMAND")
+    sub = parser.add_subparsers(dest="command", metavar="COMMAND", help="one of the commands listed below")
     sub.required = True
 
-    p_init = sub.add_parser("init", help="create or update the global settings")
+    p_init = sub.add_parser("init", description="create or update the global settings")
     p_init.add_argument("--root", help="directory that holds account directories (default ~/.cc)")
     p_init.add_argument("--bin-dir", help="directory for claude-<name> launchers (default ~/.local/bin)")
     p_init.add_argument("--shared-dir", help="directory whose items can be linked into accounts")
@@ -52,7 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "(default {})".format(",".join(DEFAULT_SHARED_ITEMS)))
     _add_write_options(p_init)
 
-    p_mig = sub.add_parser("migrate-default", help="turn the default ~/.claude into a named account "
+    p_mig = sub.add_parser("migrate-default", description="turn the default ~/.claude into a named account "
                                                    "without losing its login")
     p_mig.add_argument("name")
     p_mig.add_argument("--copy", action="store_true",
@@ -64,7 +125,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="do not check whether Claude Code is running (at your own risk)")
     _add_dry_run(p_mig)
 
-    p_add = sub.add_parser("add", help="add an account, adopt an existing directory, or change its options")
+    p_add = sub.add_parser("add", description="add an account, adopt an existing directory, or change its options")
     p_add.add_argument("name")
     p_add.add_argument("--proxy", help="port, URL, off or inherit (new accounts default to inherit)")
     shared_group = p_add.add_mutually_exclusive_group()
@@ -82,12 +143,12 @@ def build_parser() -> argparse.ArgumentParser:
                        help="undo --shared-exclude for this item (repeatable)")
     _add_write_options(p_add)
 
-    p_proxy = sub.add_parser("proxy", help="set the proxy of an account")
+    p_proxy = sub.add_parser("proxy", description="set the proxy of an account")
     p_proxy.add_argument("name")
     p_proxy.add_argument("value", help="port (e.g. 7901), http(s) URL, off or inherit")
     _add_write_options(p_proxy)
 
-    p_env = sub.add_parser("env", help="set or unset extra environment variables of a launcher")
+    p_env = sub.add_parser("env", description="set or unset extra environment variables of a launcher")
     p_env.add_argument("items", nargs="*", metavar="NAME|K=V",
                        help="account name (omit with --defaults) followed by K=V assignments")
     p_env.add_argument("--defaults", action="store_true", help="change the defaults used by every account")
@@ -95,36 +156,36 @@ def build_parser() -> argparse.ArgumentParser:
     _add_write_options(p_env)
 
     # `args` 的参数列表在 argparse 之前从 argv 里切走（见 _split_args_command），这里只解析 `--` 之前的部分。
-    p_args = sub.add_parser("args", help="replace the fixed arguments of a launcher: args NAME -- [ARG ...]")
+    p_args = sub.add_parser("args", description="replace the fixed arguments of a launcher: args NAME -- [ARG ...]")
     p_args.add_argument("name", nargs="?")
     p_args.add_argument("--defaults", action="store_true", help="change the defaults used by every account")
     _add_write_options(p_args)
 
-    p_remove = sub.add_parser("remove", help="unregister an account (its directory and login are kept)")
+    p_remove = sub.add_parser("remove", description="unregister an account (its directory and login are kept)")
     p_remove.add_argument("name")
     _add_write_options(p_remove)
 
-    p_apply = sub.add_parser("apply", help="converge all accounts to the configuration")
+    p_apply = sub.add_parser("apply", description="converge all accounts to the configuration")
     p_apply.add_argument("-f", "--file", help="use this file as the new configuration")
     _add_write_options(p_apply)
 
-    p_list = sub.add_parser("list", help="show accounts and their status")
+    p_list = sub.add_parser("list", description="show accounts and their status")
     list_mode = p_list.add_mutually_exclusive_group()
     list_mode.add_argument("--verbose", action="store_true",
-                           help="also show the keychain service and credentials file of each account")
+                           help="show every field, the global settings and the keychain details")
     list_mode.add_argument("--json", action="store_true", help="print machine-readable JSON (includes usage)")
     list_mode.add_argument("--names", action="store_true", help="print only the account names, one per line")
 
-    p_usage = sub.add_parser("usage", help="show the last known 5-hour and 7-day usage of each account "
+    p_usage = sub.add_parser("usage", description="show the last known 5-hour and 7-day usage of each account "
                                            "(from Claude Code's own cache; never reads credentials)")
     p_usage.add_argument("name", nargs="?")
     p_usage.add_argument("--json", action="store_true", help="print machine-readable JSON")
 
-    p_doctor = sub.add_parser("doctor", help="check the accounts, launchers and environment (read-only)")
+    p_doctor = sub.add_parser("doctor", description="check the accounts, launchers and environment (read-only)")
     p_doctor.add_argument("--json", action="store_true", help="print machine-readable JSON")
     p_doctor.add_argument("--verbose", action="store_true", help="also list the checks that passed")
 
-    p_route = sub.add_parser("route", help="choose an account by directory for claude-auto: route DIR NAME, "
+    p_route = sub.add_parser("route", description="choose an account by directory for claude-auto: route DIR NAME, "
                                            "route DIR --remove, route --default NAME, route --no-default")
     p_route.add_argument("path", nargs="?", metavar="DIR")
     p_route.add_argument("name", nargs="?", metavar="NAME")
@@ -135,34 +196,34 @@ def build_parser() -> argparse.ArgumentParser:
                             help="run plain claude when no route matches (the initial behaviour)")
     _add_write_options(p_route)
 
-    p_rename = sub.add_parser("rename", help="rename an account and its launcher; the directory and login stay")
+    p_rename = sub.add_parser("rename", description="rename an account and its launcher; the directory and login stay")
     p_rename.add_argument("old")
     p_rename.add_argument("new")
     _add_write_options(p_rename)
 
     # mcp 的 claude 参数在 argparse 之前从 argv 里切走（见 _split_args_command）。
-    p_mcp = sub.add_parser("mcp", help="run `claude mcp ...` as an account: mcp NAME [ARG ...]")
+    p_mcp = sub.add_parser("mcp", description="run `claude mcp ...` as an account: mcp NAME [ARG ...]")
     p_mcp.add_argument("name")
 
     # login 的 claude 参数与 mcp 一样，在 argparse 之前从 argv 里切走（见 _split_args_command）。
-    p_login = sub.add_parser("login", help="sign in to an account: runs `claude auth login` as that account: "
+    p_login = sub.add_parser("login", description="sign in to an account: runs `claude auth login` as that account: "
                                            "login NAME [ARG ...]")
     p_login.add_argument("name")
 
-    p_which = sub.add_parser("which", help="show which account claude-auto would use in DIR (default: here)")
+    p_which = sub.add_parser("which", description="show which account claude-auto would use in DIR (default: here)")
     p_which.add_argument("path", nargs="?", metavar="DIR")
 
-    p_completion = sub.add_parser("completion", help="print a shell completion script")
+    p_completion = sub.add_parser("completion", description="print a shell completion script")
     p_completion.add_argument("shell", choices=completion.SHELLS)
 
     # 钩子 statusline-hook 不是子命令：它在 main 里先于 argparse 被拦下，不出现在帮助与补全中。
-    p_statusline = sub.add_parser("statusline", help="record usage from Claude's status line: wrap (install) or "
+    p_statusline = sub.add_parser("statusline", description="record usage from Claude's status line: wrap (install) or "
                                                      "restore (uninstall) the statusLine command in a settings FILE")
     p_statusline.add_argument("action", choices=("install", "uninstall"))
     p_statusline.add_argument("file", metavar="FILE")
     _add_dry_run(p_statusline)
 
-    p_handoff = sub.add_parser("handoff", help="copy a Claude session to another account so that it can be resumed "
+    p_handoff = sub.add_parser("handoff", description="copy a Claude session to another account so that it can be resumed "
                                                "there: handoff TARGET [--from NAME] [--session ID]")
     p_handoff.add_argument("target", metavar="TARGET")
     p_handoff.add_argument("--from", dest="source", metavar="NAME",
@@ -452,6 +513,7 @@ def dispatch(args: argparse.Namespace) -> int:
             _warn_if_not_logged_in(adopted_dir)
         if args.command == "add" and not args.dry_run:
             _hint_next_step(new, args.name)
+            _hint_bin_on_path(new, args.name)
     return code
 
 
@@ -703,6 +765,19 @@ def _hint_next_step(config: Config, name: str) -> None:
         info("next: multi-claude login {0}   (then start claude-{0})".format(account.name))
 
 
+def _hint_bin_on_path(config: Config, name: str) -> None:
+    """启动命令目录不在 PATH 上时，`claude-NAME` 会找不到；给出按当前 shell 可直接粘贴的命令。"""
+    bin_dir = expand(config.bin_dir)
+    entries = [os.path.abspath(os.path.expanduser(entry)) for entry in os.environ.get("PATH", "").split(os.pathsep)
+               if entry]
+    if bin_dir in entries:
+        return
+    account = config.find(name)
+    launcher_name = "claude-" + (account.name if account is not None else name)
+    info("note: {} is not on PATH, so {} will not be found; {}".format(
+        bin_dir, launcher_name, shellpath.path_hint(bin_dir, os.environ.get("SHELL"), py_platform.system())))
+
+
 def _warn_if_not_logged_in(directory: str) -> None:
     """add 登记已有目录时的只读登录探测（方案 §5.1.9）：只提示，不改变退出码。
 
@@ -795,6 +870,8 @@ def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = Fa
         info("no configuration yet at {}; run `multi-claude add NAME` to start".format(
             os.path.join(platform.state_dir(), "config.json")))
         return accounts.EXIT_OK
+    if not verbose:
+        return _print_brief_list(config)
     print("root: {}".format(expand(config.root)))
     print("bin_dir: {}".format(expand(config.bin_dir)))
     print("shared.dir: {}".format(expand(config.shared_dir) if config.shared_dir else "(not set)"))
@@ -815,15 +892,8 @@ def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = Fa
         if verbose:
             details.append("  {}: keychain service {!r}, credentials file {}".format(
                 entry["name"], entry["keychain_service"], entry["credentials_file"]))
-    widths = [max(len(row[index]) for row in rows) for index in range(len(rows[0]))]
-    for row in rows:
-        print("  ".join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip())
-    if config.routes_enabled:
-        print("routes:")
-        for rule in config.route_rules:
-            print("  {} -> {}".format(rule.path, rule.account))
-        if config.route_default is not None:
-            print("  (default) -> {}".format(config.route_default))
+    _print_table(rows)
+    _print_routes(config)
     if default_account is not None:
         print("note: {} keeps its global state in {} (not moved by migrate-default)".format(
             default_account, os.path.join(os.path.expanduser("~"), ".claude.json")))
@@ -831,6 +901,61 @@ def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = Fa
         print(line)
     accounts.warn_launch_settings(config, None, note_invalid=True)
     return accounts.EXIT_OK
+
+
+def _print_brief_list(config: Config) -> int:
+    """list 的默认输出：只放新用户关心的列（方案 feature-clearer-help §5.1.2）；完整信息见 --verbose。"""
+    if not config.accounts:
+        print("no accounts registered; run `multi-claude add NAME` to start")
+        return accounts.EXIT_OK
+    if "CLAUDE_CODE_CUSTOM_OAUTH_URL" in os.environ:
+        # 与完整输出相同：LOGIN 与由它得出的 STATUS 都按正式服务探测，这时可能不准。
+        warn("CLAUDE_CODE_CUSTOM_OAUTH_URL is set; LOGIN assumes the production service and may be wrong")
+    now = datetime.now(timezone.utc)
+    rows = [("NAME", "LOGIN", "PROXY", "SHARED", "5H", "7D", "STATUS")]
+    has_problem = False
+    for entry in _account_entries(config):
+        report = usage.read_account_usage(config, config.find(entry["name"]), now)
+        status = _status_cell(entry)
+        has_problem = has_problem or status != "ok"
+        rows.append((entry["name"], entry["login"], entry["proxy"], _shared_cell(entry),
+                     _window_cell(report.five_hour, now), _window_cell(report.seven_day, now), status))
+    _print_table(rows)
+    _print_routes(config)
+    if has_problem:
+        print("run multi-claude doctor for details")
+    accounts.warn_launch_settings(config, None, note_invalid=True)
+    return accounts.EXIT_OK
+
+
+def _status_cell(entry: dict) -> str:
+    """把账号的各项问题合成一格；顺序固定，便于用户和测试对照。"""
+    problems = []
+    if not entry["dir_exists"]:
+        problems.append("directory missing")
+    if entry["launcher"] != "ok":
+        problems.append("launcher {}".format(entry["launcher"]))
+    if entry["link"] not in (None, "ok"):
+        problems.append("link {}".format(entry["link"]))
+    if entry["login"] == identity.LOGIN_NONE:
+        problems.append("not logged in")
+    return ", ".join(problems) or "ok"
+
+
+def _print_table(rows: List[tuple]) -> None:
+    widths = [max(len(row[index]) for row in rows) for index in range(len(rows[0]))]
+    for row in rows:
+        print("  ".join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip())
+
+
+def _print_routes(config: Config) -> None:
+    if not config.routes_enabled:
+        return
+    print("routes:")
+    for rule in config.route_rules:
+        print("  {} -> {}".format(rule.path, rule.account))
+    if config.route_default is not None:
+        print("  (default) -> {}".format(config.route_default))
 
 
 def _shared_cell(entry: dict) -> str:

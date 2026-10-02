@@ -179,7 +179,7 @@ class DefaultLauncherTest(MigrateBase):
         self.assertNotIn("CLAUDE_CONFIG_DIR", env)
         self.assertNotIn("CLAUDE_SECURESTORAGE_CONFIG_DIR", env)
         self.assertEqual(env["HTTPS_PROXY"], "http://127.0.0.1:7901")
-        listing = self.ok("list").out
+        listing = self.ok("list", "--verbose").out
         self.assertRegex(listing, r"main\s+default\s+ok\s+\S+\s+no\s+ok\s+\S+\s+ok")
         self.assertIn(os.path.join(self.home, ".claude.json"), listing)
 
@@ -190,14 +190,14 @@ class DefaultLauncherTest(MigrateBase):
         self.assertEqual(code, 1)
         self.assertEqual(args, [])
         self.assertIn("no longer points to", stderr)
-        self.assertRegex(self.ok("list").out, r"main .* missing")
+        self.assertRegex(self.ok("list", "--verbose").out, r"main .* missing")
         elsewhere = os.path.join(self.tmp, "elsewhere")
         os.makedirs(elsewhere)
         os.symlink(elsewhere, self.source)
         code, args, _, _ = self.run_launcher("main")
         self.assertEqual(code, 1)
         self.assertEqual(args, [])
-        self.assertRegex(self.ok("list").out, r"main .* broken")
+        self.assertRegex(self.ok("list", "--verbose").out, r"main .* broken")
 
     def test_paths_with_space_and_quote(self):
         home = os.path.join(self.tmp, "my h'ome")

@@ -22,7 +22,14 @@ All notable changes to this project are documented here. The format follows
 - A proxy value that is neither a port nor a URL gets an error that shows
   the accepted forms.
 - README: the quick start begins with `add` and `login`; migrating
-  `~/.claude` is described as optional.
+  `~/.claude` is described as optional. The rest is grouped into everyday
+  tasks, migration and a reference section.
+- `--help` lists the commands by purpose, with examples; each command's
+  `--help` starts with what it does.
+- `list` shows a short table (login, proxy, sharing, 5-hour and 7-day usage
+  and any problem); `list --verbose` shows the previous full listing.
+- When the launcher directory is not on `PATH`, `install.sh`, `add` and
+  `doctor` print the exact line to add for zsh, bash or fish.
 
 ## [0.2.2] - 2026-10-01
 
