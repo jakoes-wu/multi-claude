@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `usage --history [NAME] [--days N] [--by day|model] [--json]`: token usage
+  per day or model, counted from the session files on this machine (only the
+  counters are read; each reply is counted once).
+- `list` shows `LAST USED` for each account (`last_used` in `--json`).
+- When `claude` is not on `PATH`, the errors of `login`, `mcp`, `run` and
+  `doctor` show the official install command.
+
 ### Changed
 
 - README: the privacy properties (never reads logins, no network, no shell

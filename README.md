@@ -223,6 +223,23 @@ The command becomes `<path of multi-claude> statusline-hook '<original command>'
 - If several settings files define `statusLine`, wrap the one that wins (for example a file passed with `--settings` in the launcher arguments).
 - Run `multi-claude statusline uninstall FILE` before uninstalling multi-claude; otherwise the status line stays empty because the wrapped command cannot be found. Running `install` again after multi-claude moves updates the path.
 
+#### Token history
+
+```sh
+multi-claude usage --history                   # tokens per day, last 7 days, every account
+multi-claude usage --history work --days 30 --by model
+```
+
+```text
+work:
+  DATE        INPUT   OUTPUT  CACHE READ  CACHE WRITE  REPLIES
+  2026-10-01  1,246  499,681  273,254,361   5,926,527      612
+```
+
+`--history` counts the replies in the account's session files on this machine (`projects/**/*.jsonl`, including subagents): input, output, cache-read and cache-write tokens per day (local time) or per model. Only these counters are read; nothing else from the conversations is printed or stored, and nothing is sent anywhere. Sessions on other machines and deleted sessions are not counted. A session copied with `handoff` appears in both accounts; the `TOTAL` block counts each reply once. `--json` prints the same numbers for scripts.
+
+`list` shows when each account was last used (`LAST USED`), from the newest session file or prompt history in its directory; a `handoff` into an account counts as use.
+
 ### Handing a session over to another account
 
 Each account keeps its own sessions, so `claude --resume` in one account cannot see the sessions of another. `handoff` copies one session (its `.jsonl` file and the folder next to it with subagent transcripts and saved tool output) into the same project folder of another account:
@@ -377,6 +394,7 @@ It never reads it: its only keychain call checks whether an item exists, and it 
 | `multi-claude apply [-f FILE]` | Converge everything to the configuration (or to `FILE`). |
 | `multi-claude list [--verbose \| --json \| --names]` | Show accounts, launchers and login state. `--json` adds usage and is meant for scripts; `--names` prints only the names. |
 | `multi-claude usage [NAME] [--json]` | Show the last known 5-hour and 7-day usage of each account. |
+| `multi-claude usage --history [NAME] [--days N] [--by day\|model] [--json]` | Token usage per day or model, counted from the session files on this machine (default: 7 days). |
 | `multi-claude doctor [--json] [--verbose]` | Check the configuration, launchers, account directories, shared links, logins and environment. |
 | `multi-claude route DIR NAME`, `route DIR --remove`, `route --default NAME`, `route --no-default` | Choose an account by directory for `claude-auto`. |
 | `multi-claude which [DIR]` | Show which account `claude-auto` would use in `DIR` (default: the current directory). |

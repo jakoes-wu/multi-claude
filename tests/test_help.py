@@ -43,9 +43,9 @@ class BriefListTest(CliTestCase):
         self.ok("add", "work", "--proxy", "7901")
         self.write_cache("work", 23)
         out = self.ok("list").out
-        self.assertRegex(out.splitlines()[0], r"^NAME\s+LOGIN\s+PROXY\s+SHARED\s+5H\s+7D\s+STATUS$")
+        self.assertRegex(out.splitlines()[0], r"^NAME\s+LOGIN\s+PROXY\s+SHARED\s+5H\s+7D\s+LAST USED\s+STATUS$")
         self.assertNotIn("root:", out)
-        self.assertRegex(out, r"work\s+none\s+http://127\.0\.0\.1:7901\s+no\s+23% \d\d:\d\d\s+-\s+not logged in")
+        self.assertRegex(out, r"work\s+none\s+http://127\.0\.0\.1:7901\s+no\s+23% \d\d:\d\d\s+-\s+-\s+not logged in")
         self.assertIn("run multi-claude doctor for details", out)
 
     def test_t4_status_problems(self):

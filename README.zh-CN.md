@@ -223,6 +223,23 @@ multi-claude statusline install ~/.claude/settings.json
 - 多个设置文件都定义了 `statusLine` 时，包装生效的那份（例如启动命令固定参数里用 `--settings` 传入的文件）。
 - 卸载 multi-claude 前先运行 `multi-claude statusline uninstall 文件`，否则包装命令找不到可执行文件，状态栏会变空。multi-claude 换了位置后再运行一次 `install` 即可更新路径。
 
+#### token 用量历史
+
+```sh
+multi-claude usage --history                   # 所有账号最近 7 天每天的 token 用量
+multi-claude usage --history work --days 30 --by model
+```
+
+```text
+work:
+  DATE        INPUT   OUTPUT  CACHE READ  CACHE WRITE  REPLIES
+  2026-10-01  1,246  499,681  273,254,361   5,926,527      612
+```
+
+`--history` 统计本机上该账号会话记录（`projects/**/*.jsonl`，含子代理）里的回复：按天（本地时间）或按模型汇总输入、输出、缓存读、缓存写 token。只读这几项计数，对话里的其它内容既不输出也不保存，也不发往任何地方。其它机器上的会话和已删除的会话不计入。用 `handoff` 复制过的会话在两个账号里都会出现，`TOTAL` 一段里每条回复只算一次。`--json` 输出同样的数字，供脚本使用。
+
+`list` 会显示每个账号最近一次使用的时间（`LAST USED`），取自账号目录里最新的会话文件或输入历史；`handoff` 复制到某个账号也算一次使用。
+
 ### 把会话交给另一个账号
 
 每个账号的会话各自存放，在一个账号里 `claude --resume` 看不到另一个账号的会话。`handoff` 把一条会话（`.jsonl` 文件以及旁边存放子代理记录和工具输出的同名目录）复制到另一个账号的同一项目目录下：
@@ -377,6 +394,7 @@ multi-claude remove main         # 注销账号
 | `multi-claude apply [-f 文件]` | 按配置（或 `文件`）收敛全部账号 |
 | `multi-claude list [--verbose \| --json \| --names]` | 列出账号、启动命令和登录状态；`--json` 额外包含用量，供脚本使用；`--names` 只输出名称 |
 | `multi-claude usage [名称] [--json]` | 显示各账号最近一次已知的 5 小时 / 7 天用量 |
+| `multi-claude usage --history [名称] [--days N] [--by day\|model] [--json]` | 按天或按模型统计本机会话记录里的 token 用量（默认 7 天） |
 | `multi-claude doctor [--json] [--verbose]` | 检查配置、启动命令、账号目录、共享软链、登录与环境变量 |
 | `multi-claude route 目录 名称`、`route 目录 --remove`、`route --default 名称`、`route --no-default` | 为 `claude-auto` 设置按目录选账号的规则 |
 | `multi-claude which [目录]` | 显示 `claude-auto` 在该目录（默认当前目录）会用哪个账号 |
