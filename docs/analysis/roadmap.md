@@ -57,7 +57,7 @@
 | 第一批 | 无参数时的上手说明或账号表；拼错命令的建议；`login`；`add` 后的下一步提示；代理报错可读；写命令只打印变化 | `feature-easier-onboarding.md` | v0.3.0（PR #15） |
 | 第二批 | 帮助分组与示例；`list` 简表（`--verbose` 为完整输出）；按 shell 给出 PATH 命令；README 重排 | `feature-clearer-help.md` | v0.3.0（PR #16） |
 | 第三批 | `set` 命令；`--shared [DIR]` 与默认 `~/.claude-shared`；空共享目录提示 | `feature-set-command.md` | v0.3.0（PR #17） |
-| 小改进 | 本文档补 v0.3.0；包装状态栏后提示新开会话；账号名写在选项后面时的报错 | `feature-usability-fixes.md` | 待发布 |
+| 小改进 | 本文档补 v0.3.0；包装状态栏后提示新开会话；账号名写在选项后面时的报错 | `feature-usability-fixes.md` | v0.3.1（PR #19） |
 
 ## 3. 待定（未排期）
 
