@@ -336,6 +336,8 @@ With pipx, run `pipx upgrade multi-claude-cli`; with Homebrew, `brew upgrade mul
 
 The one in `~/.claude`, as before: multi-claude does not change it. After [migrating `~/.claude`](#migrating-claude) it is the migrated account. `claude-auto` picks an account by directory instead; see [Choosing an account by directory](#choosing-an-account-by-directory).
 
+There is no command that switches which account plain `claude` uses. Besides `~/.claude`, plain `claude` reads the login in the keychain (macOS) and `~/.claude.json`, and neither would follow such a switch, so two accounts would get mixed up. Use the launchers (`claude-work`), or `multi-claude route --default work` and start `claude-auto`.
+
 ### How do I continue a conversation with another account?
 
 Inside the Claude session, run `! multi-claude handoff OTHER`, then run the command it prints in a new terminal. See [Handing a session over to another account](#handing-a-session-over-to-another-account).

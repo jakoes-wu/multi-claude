@@ -75,7 +75,7 @@
 
 ## 3. 待定（未排期）
 
-- `use NAME`（切换 `~/.claude` 指向的账号）：等用户决定。直接运行 `claude` 时钥匙串登录（macOS）、`~/.claude.json` 与 default 账号启动命令的指向检查都不跟着 `~/.claude` 走，切换后会混用两个账号的状态，见 `feature-everyday-commands.md` §6、§10。
+- `use NAME`（切换 `~/.claude` 指向的账号）：**不做**（用户 2026-10-03 决定）。直接运行 `claude` 时钥匙串登录（macOS）、`~/.claude.json` 与 default 账号启动命令的指向检查都不跟着 `~/.claude` 走，切换后会混用两个账号的状态；改用各账号的启动命令，或 `route --default NAME` 加 `claude-auto`。见 `feature-everyday-commands.md` §6、§10。
 
 - Windows 支持（见 `feature-account-manager.md` 二期）。
 - TUI 选择器、菜单栏：可以基于 `list --json` 由外部工具实现。
