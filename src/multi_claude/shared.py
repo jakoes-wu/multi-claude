@@ -39,7 +39,7 @@ def plan_shared(new: Config, account: Account, account_dir: str,
             source = os.path.join(shared_root, item)
             if entry_kind(source) == KIND_MISSING:
                 actions.append(Action(SKIP, "shared-link", os.path.join(account_dir, item),
-                                      "not present in shared dir {}".format(shared_root)))
+                                      "not present in shared dir {}".format(shared_root), quiet=True))
                 continue
             desired[item] = source
 

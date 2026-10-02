@@ -106,9 +106,11 @@ multi-claude env work MAX_THINKING_TOKENS=8000 --unset OLD_VAR
 ### 共享资源
 
 ```sh
-multi-claude init --shared-dir ~/.claude-shared
-multi-claude add work --shared
+multi-claude add work --shared              # 从 ~/.claude-shared（或已设置的共享目录）共享
+multi-claude set work --shared ~/claude-common  # 把 ~/claude-common 设为所有账号的共享目录
 ```
+
+把希望所有账号都能看到的 `agents`、`commands`、`skills` 或 `CLAUDE.md` 放进共享目录；multi-claude 不会创建或填充它，里面一项都没有时会提示。用 `--shared DIR`（或 `init --shared-dir DIR`）更换目录时，所有开启共享的账号的链接都会跟着改。
 
 默认条目为 `agents`、`commands`、`skills`、`CLAUDE.md`，只链接 `shared.items` 中列出的条目。multi-claude 只创建缺少的软链，并记住哪些是它建的。关闭共享时只删除这些软链，你自己建的软链保持不动。软链位置上已有真实文件或目录时判为冲突，绝不覆盖。
 
@@ -117,8 +119,8 @@ multi-claude add work --shared
 想让某个账号单独不共享某一项（例如用它自己的 `skills`）：
 
 ```sh
-multi-claude add work --shared-exclude skills    # 删除 multi-claude 建立的 skills 软链
-multi-claude add work --shared-include skills    # 重新链接
+multi-claude set work --shared-exclude skills    # 删除 multi-claude 建立的 skills 软链
+multi-claude set work --shared-include skills    # 重新链接
 ```
 
 其它项照常共享，共享目录不受影响；你自己在那个位置放的目录或软链不会被动。`list` 显示 `yes (not: skills)`。用 `apply -f` 时，文件里没写 `shared_exclude` 的账号会恢复共享全部项。
@@ -253,7 +255,8 @@ multi-claude remove main         # 注销账号
 | ---- | ---- |
 | `multi-claude init [--root DIR] [--bin-dir DIR] [--shared-dir DIR] [--shared-items A,B]` | 创建或修改全局设置 |
 | `multi-claude migrate-default 名称 [--copy] [--keep-backup] [--proxy P] [--skip-process-check]` | 把 `~/.claude` 变成一个账号 |
-| `multi-claude add 名称 [--proxy P] [--shared \| --no-shared] [--adopt] [--shared-exclude 项] [--shared-include 项]` | 新增账号、登记已有目录或修改其选项；`--shared-exclude` 让这个账号不共享某一项，`--shared-include` 撤销 |
+| `multi-claude add 名称 [--proxy P] [--shared [目录] \| --no-shared] [--adopt] [--shared-exclude 项] [--shared-include 项]` | 新增账号、登记已有目录或修改其选项；`--shared 目录` 同时把它设为所有账号的共享目录（默认 `~/.claude-shared`）；`--shared-exclude` 让这个账号不共享某一项，`--shared-include` 撤销 |
+| `multi-claude set 名称 [--proxy P] [--shared [目录] \| --no-shared] [--shared-exclude 项] [--shared-include 项]` | 修改已有账号，选项同 `add`（没有 `--adopt`）；账号未登记时返回 1 |
 | `multi-claude proxy 名称 端口\|URL\|off\|inherit` | 设置账号代理 |
 | `multi-claude env (名称 \| --defaults) [K=V ...] [--unset K ...]` | 设置或删除额外环境变量 |
 | `multi-claude args (名称 \| --defaults) -- [参数 ...]` | 整体替换固定参数；`--` 后面为空表示清空 |

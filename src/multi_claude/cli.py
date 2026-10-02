@@ -20,7 +20,7 @@ from typing import List, Optional, Tuple
 from . import (__version__, accounts, completion, doctor, hook, identity, migrate, platform, routes, sessions,
                shellpath, statusline, usage)
 from .actions import error, info, warn
-from .config import (DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError, RouteRule,
+from .config import (DEFAULT_SHARED_DIR, DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError, RouteRule,
                      is_unshareable, load_config, normalize_proxy, parse_config, validate_env_key, validate_name,
                      validate_route_path, validate_value, config_path)
 from .env import account_env
@@ -44,6 +44,7 @@ COMMAND_GROUPS = [
         ("list", "show accounts, logins and usage"),
     ]),
     ("Account settings", [
+        ("set NAME", "change an account: proxy and sharing"),
         ("proxy, env, args", "set the proxy, extra variables or fixed arguments of a launcher"),
         ("rename, remove", "rename or unregister an account"),
         ("migrate-default", "turn the existing ~/.claude into an account"),
@@ -126,22 +127,11 @@ def build_parser() -> argparse.ArgumentParser:
     _add_dry_run(p_mig)
 
     p_add = sub.add_parser("add", description="add an account, adopt an existing directory, or change its options")
-    p_add.add_argument("name")
-    p_add.add_argument("--proxy", help="port, URL, off or inherit (new accounts default to inherit)")
-    shared_group = p_add.add_mutually_exclusive_group()
-    shared_group.add_argument("--shared", dest="shared", action="store_true", default=None,
-                              help="link shared items into this account")
-    shared_group.add_argument("--no-shared", dest="shared", action="store_false",
-                              help="do not link shared items (default for new accounts)")
-    p_add.add_argument("--adopt", action="store_true",
-                       help="take over existing links that already point to the shared items, "
-                            "so that turning sharing off later removes them too")
-    p_add.add_argument("--shared-exclude", action="append", default=[], metavar="ITEM",
-                       help="do not link this shared item into the account (repeatable); "
-                            "the link multi-claude made is removed")
-    p_add.add_argument("--shared-include", action="append", default=[], metavar="ITEM",
-                       help="undo --shared-exclude for this item (repeatable)")
-    _add_write_options(p_add)
+    _add_account_options(p_add, adopt=True)
+
+    p_set = sub.add_parser("set", description="change an existing account: proxy and sharing "
+                                              "(use env, args, rename for the rest)")
+    _add_account_options(p_set, adopt=False)
 
     p_proxy = sub.add_parser("proxy", description="set the proxy of an account")
     p_proxy.add_argument("name")
@@ -239,6 +229,30 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _add_dry_run(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dry-run", action="store_true", help="show the planned actions without changing anything")
+
+
+def _add_account_options(parser: argparse.ArgumentParser, adopt: bool) -> None:
+    """add 与 set 共用的选项；只有 add 有 --adopt（接管只在登记已有目录时有意义）。"""
+    parser.add_argument("name")
+    parser.add_argument("--proxy", help="port, URL, off or inherit (new accounts default to inherit)")
+    shared_group = parser.add_mutually_exclusive_group()
+    # --shared 可带一个目录：不带时用已设置的共享目录（未设置则为 ~/.claude-shared），
+    # 带 DIR 时把全局共享目录改为 DIR，所有开启共享的账号的链接都改指向它（方案 feature-set-command §5.1）。
+    shared_group.add_argument("--shared", dest="shared_to", nargs="?", const=True, default=None, metavar="DIR",
+                              help="link the shared items into this account; with DIR, also make DIR the shared "
+                                   "directory for every account (default {})".format(DEFAULT_SHARED_DIR))
+    shared_group.add_argument("--no-shared", dest="no_shared", action="store_true",
+                              help="do not link shared items (default for new accounts)")
+    if adopt:
+        parser.add_argument("--adopt", action="store_true",
+                            help="take over existing links that already point to the shared items, "
+                                 "so that turning sharing off later removes them too")
+    parser.add_argument("--shared-exclude", action="append", default=[], metavar="ITEM",
+                        help="do not link this shared item into the account (repeatable); "
+                             "the link multi-claude made is removed")
+    parser.add_argument("--shared-include", action="append", default=[], metavar="ITEM",
+                        help="undo --shared-exclude for this item (repeatable)")
+    _add_write_options(parser)
 
 
 def _add_write_options(parser: argparse.ArgumentParser) -> None:
@@ -383,7 +397,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return accounts.EXIT_CONFLICT
     except _NotRegistered as exc:
         # 与 proxy 一致：对未登记的账号名返回 1。
-        error("account {!r} is not registered".format(exc.args[0]))
+        error("account {!r} is not registered{}".format(
+            exc.args[0], "; " + exc.args[1] if len(exc.args) > 1 else ""))
         return accounts.EXIT_ERROR
     except ConfigError as exc:
         error(str(exc), phase="config")
@@ -416,6 +431,8 @@ def dispatch(args: argparse.Namespace) -> int:
     warn_names: Optional[List[str]] = []
     adopted_dir: Optional[str] = None
     renamed: Optional[Tuple[str, str]] = None
+    # --shared DIR 修改全局共享目录时记下 (旧值, 新值)，收敛成功后告诉用户所有共享账号都跟着改了。
+    changed_shared_dir: Optional[Tuple[Optional[str], str]] = None
 
     if args.command == "init":
         if args.root:
@@ -433,9 +450,14 @@ def dispatch(args: argparse.Namespace) -> int:
                 raise UsageError("--shared-items must not include {}: it holds account-specific state".format(
                     ", ".join(unshareable)))
             new.shared_items = items
-    elif args.command == "add":
+    elif args.command in ("add", "set"):
         name = _checked_name(args.name)
         account = new.find(name)
+        if account is None and args.command == "set":
+            raise _NotRegistered(name, "use multi-claude add {} to create it".format(name))
+        if args.command == "set" and not _has_account_option(args):
+            raise UsageError("nothing to set; give at least one option, e.g. `multi-claude set {} --proxy 7901`"
+                             .format(name))
         if account is None:
             account = Account(name)
             new.accounts[name] = account
@@ -444,10 +466,17 @@ def dispatch(args: argparse.Namespace) -> int:
                 adopted_dir = directory
         if args.proxy is not None:
             account.proxy = _checked_proxy(args.proxy)
-        if args.shared is not None:
-            account.shared = args.shared
+        if args.shared_to is not None:
+            if args.shared_to is not True:
+                changed_shared_dir = (new.shared_dir, _checked_shared_dir(args.shared_to))
+                new.shared_dir = changed_shared_dir[1]
+            elif not new.shared_dir:
+                new.shared_dir = DEFAULT_SHARED_DIR
+            account.shared = True
+        elif args.no_shared:
+            account.shared = False
         _apply_shared_exclude(new, account, args.shared_exclude, args.shared_include)
-        if args.adopt:
+        if getattr(args, "adopt", False):
             # 接管只对开启了共享的账号有意义；关闭状态下工具本来就不管这些软链。
             if not account.shared:
                 raise UsageError("--adopt requires sharing to be on for {!r}; add --shared".format(account.name))
@@ -514,6 +543,11 @@ def dispatch(args: argparse.Namespace) -> int:
         if args.command == "add" and not args.dry_run:
             _hint_next_step(new, args.name)
             _hint_bin_on_path(new, args.name)
+        if args.command in ("add", "set") and not args.dry_run:
+            if changed_shared_dir is not None and changed_shared_dir[0] != changed_shared_dir[1]:
+                info("shared directory is now {} (was {}); links of every shared account point there".format(
+                    changed_shared_dir[1], changed_shared_dir[0] or "not set"))
+            _hint_empty_shared_dir(new, args.name)
     return code
 
 
@@ -713,7 +747,7 @@ def cmd_which(path: Optional[str]) -> int:
 
 
 class _NotRegistered(Exception):
-    """env / args 指定的账号未登记，对应退出码 1。"""
+    """env / args / set 指定的账号未登记，对应退出码 1。args[1]（可选）是附加在报错后的提示。"""
 
 
 def _registered(config: Config, name: str) -> Account:
@@ -763,6 +797,30 @@ def _hint_next_step(config: Config, name: str) -> None:
         return
     if identity.probe(account.identity, accounts.account_dir(config, account.name)) == identity.LOGIN_NONE:
         info("next: multi-claude login {0}   (then start claude-{0})".format(account.name))
+
+
+def _has_account_option(args: argparse.Namespace) -> bool:
+    return bool(args.proxy is not None or args.shared_to is not None or args.no_shared
+                or args.shared_exclude or args.shared_include)
+
+
+def _checked_shared_dir(value: str) -> str:
+    """--shared DIR 的值必须像路径，免得把 `add --shared work` 里的账号名之类的词当成目录。"""
+    if not ("/" in value or value.startswith(("~", "."))):
+        raise UsageError("--shared DIR expects a directory path, e.g. --shared ~/claude-shared; got {!r}".format(value))
+    return value
+
+
+def _hint_empty_shared_dir(config: Config, name: str) -> None:
+    """开启共享后，共享目录里一个默认条目都没有时，说明该往哪里放什么（工具不替用户创建）。"""
+    account = config.find(name)
+    if account is None or not account.shared or not config.shared_dir:
+        return
+    root = expand(config.shared_dir)
+    if any(os.path.lexists(os.path.join(root, item)) for item in config.shared_items):
+        return
+    info("note: {} has none of {} yet; put what every account should share there, then run "
+         "multi-claude apply".format(config.shared_dir, ", ".join(config.shared_items)))
 
 
 def _hint_bin_on_path(config: Config, name: str) -> None:
