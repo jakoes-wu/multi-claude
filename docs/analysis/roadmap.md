@@ -85,8 +85,8 @@
 
 | 项 | 实现 | 设计文档 | 发布 |
 | ---- | ---- | ---- | ---- |
-| 不含凭据的配置包 | `export` / `import`：白名单条目 + `mcpServers`；冲突默认拒绝，`--force` 先备份 | `feature-config-bundle.md` | 待发布 |
-| 共用 MCP、插件、设置 | README 写法：`--mcp-config`、`--settings`、`CLAUDE_CODE_PLUGIN_CACHE_DIR` | 同上 | 待发布 |
+| 不含凭据的配置包 | `export` / `import`：白名单条目 + `mcpServers`；冲突默认拒绝，`--force` 先备份 | `feature-config-bundle.md` | v0.8.0（PR #34） |
+| 共用 MCP、插件、设置 | README 写法：`--mcp-config`、`--settings`、`CLAUDE_CODE_PLUGIN_CACHE_DIR` | 同上 | v0.8.0（PR #34） |
 
 ## 3. 待定（未排期）
 
