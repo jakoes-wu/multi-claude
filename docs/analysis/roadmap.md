@@ -81,6 +81,13 @@
 | 最近使用时间 | `list` 的 `LAST USED` | 同上 | v0.7.0（PR #32） |
 | 安装提示 | 找不到 claude 时给出官方安装命令 | 同上 | v0.7.0（PR #32） |
 
+### 2.8 配置导出与导入（v0.8.0）
+
+| 项 | 实现 | 设计文档 | 发布 |
+| ---- | ---- | ---- | ---- |
+| 不含凭据的配置包 | `export` / `import`：白名单条目 + `mcpServers`；冲突默认拒绝，`--force` 先备份 | `feature-config-bundle.md` | 待发布 |
+| 共用 MCP、插件、设置 | README 写法：`--mcp-config`、`--settings`、`CLAUDE_CODE_PLUGIN_CACHE_DIR` | 同上 | 待发布 |
+
 ## 3. 待定（未排期）
 
 - `use NAME`（切换 `~/.claude` 指向的账号）：**不做**（用户 2026-10-03 决定）。直接运行 `claude` 时钥匙串登录（macOS）、`~/.claude.json` 与 default 账号启动命令的指向检查都不跟着 `~/.claude` 走，切换后会混用两个账号的状态；改用各账号的启动命令，或 `route --default NAME` 加 `claude-auto`。见 `feature-everyday-commands.md` §6、§10。

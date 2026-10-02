@@ -180,6 +180,32 @@ Items that hold one account's own state cannot be shared: `.credentials.json`, `
 
 **`skills/synced/`.** Claude Code stores skills synced from claude.ai in `skills/synced/`, one bucket per organization and account. If an account's `skills` is a real directory, turning sharing on is a conflict and multi-claude does not move anything. You may move the account's `skills/synced/<bucket>` into the shared directory's `skills/synced/` yourself: buckets of different accounts have different names and do not collide, but from then on that account's synced skills are written to the shared directory.
 
+### Exporting and importing settings
+
+```sh
+multi-claude export work ~/work-settings.tar.gz     # on this machine
+multi-claude import ~/work-settings.tar.gz client   # into another (existing) account, here or elsewhere
+```
+
+`export` writes `settings.json`, `CLAUDE.md`, `agents`, `commands`, `skills` and `output-styles` of the account, plus the MCP servers from its `.claude.json` (only the `mcpServers` entry), to a `.tar.gz` that only you can read. Logins, the rest of `.claude.json`, sessions, history and the plugin cache are never included. Items that are links (shared items) are skipped. If `settings.json` or the MCP servers contain values under names such as `API_KEY` or `Authorization`, `export` lists those names (not the values): treat the file like a password.
+
+`import` copies the items into an account you created with `add`, and adds the MCP servers to its `.claude.json`. An item or MCP server that already exists with different content is a conflict: nothing is changed and the conflicts are listed. With `--force`, each one is first renamed to `<name>.multi-claude-bak.<timestamp>` and then replaced. An item that is a shared link is never replaced; turn sharing off for it first. `--dry-run` shows the plan. Restart running Claude sessions of the account after importing MCP servers; they keep their own copy of `.claude.json` and may overwrite the change.
+
+Plugin choices travel in `settings.json` (`enabledPlugins`, `extraKnownMarketplaces`); Claude Code downloads the plugins again in the new account.
+
+### Sharing MCP servers, plugins and settings
+
+Shared links cover files and directories. For settings and MCP servers that every account should have, pass them on the command line of every launcher instead:
+
+```sh
+multi-claude args --defaults -- --mcp-config ~/.claude-shared/mcp.json --settings ~/.claude-shared/settings.json
+multi-claude env --defaults CLAUDE_CODE_PLUGIN_CACHE_DIR=~/.claude-shared/plugins
+```
+
+- `--settings` is merged with each account's own `settings.json`: keys in the shared file win, other keys stay. Put `enabledPlugins`, `extraKnownMarketplaces`, `permissions` or `env` there.
+- `--mcp-config` loads MCP servers from a JSON file (`{"mcpServers": {...}}`) in addition to each account's own. It takes several values, so keep another option after it (as `--settings` above); multi-claude warns otherwise.
+- `CLAUDE_CODE_PLUGIN_CACHE_DIR` moves the plugins directory (marketplaces and the plugin cache), so plugins are downloaded once for all accounts.
+
 ### Choosing an account by directory
 
 ```sh
@@ -385,6 +411,8 @@ It never reads it: its only keychain call checks whether an item exists, and it 
 | `multi-claude init [--root DIR] [--bin-dir DIR] [--shared-dir DIR] [--shared-items A,B]` | Create or change global settings. |
 | `multi-claude migrate-default [NAME] [--copy] [--keep-backup] [--proxy P] [--skip-process-check]` | Turn `~/.claude` into an account. Without NAME, the email address of its login is used. |
 | `multi-claude restore NAME [--skip-process-check] [--dry-run]` | Undo `migrate-default`: move the account back to `~/.claude` and unregister it. The login is kept. |
+| `multi-claude export NAME FILE` | Write the account's settings, `CLAUDE.md`, agents, commands, skills, output styles and MCP servers to FILE. No logins or sessions. |
+| `multi-claude import FILE NAME [--force] [--dry-run]` | Import such a file into an existing account; conflicts are refused unless `--force` (which backs up first). |
 | `multi-claude add NAME [--proxy P] [--shared [DIR] \| --no-shared] [--adopt] [--shared-exclude ITEM] [--shared-include ITEM] [--config-from OTHER]` | Add an account, adopt an existing directory, or change its options. `--config-from` copies `settings.json` from OTHER once. `--shared DIR` also makes DIR the shared directory for every account (default `~/.claude-shared`). `--shared-exclude` keeps one shared item out of this account; `--shared-include` undoes it. |
 | `multi-claude set NAME [--proxy P] [--shared [DIR] \| --no-shared] [--shared-exclude ITEM] [--shared-include ITEM]` | Change an existing account; same options as `add` without `--adopt`. Returns 1 for an account that is not registered. |
 | `multi-claude proxy NAME PORT\|URL\|off\|inherit` | Set an account's proxy. |

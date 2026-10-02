@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `export NAME FILE` writes an account's settings, `CLAUDE.md`, agents,
+  commands, skills, output styles and MCP servers (only `mcpServers` from
+  `.claude.json`) to a private `.tar.gz`; logins and sessions are never
+  included. `import FILE NAME [--force] [--dry-run]` imports it into an
+  existing account; conflicts are refused unless `--force`, which backs up
+  first.
+- README: how to share MCP servers, plugins and settings between all accounts
+  with `--mcp-config`, `--settings` and `CLAUDE_CODE_PLUGIN_CACHE_DIR`.
+
 ## [0.7.0] - 2026-10-03
 
 ### Added
