@@ -1,0 +1,38 @@
+name: Release assets
+
+# 发布 release 时生成固定的源码包与 SHA256SUMS，作为 release 附件上传，供 install.sh 下载后校验
+# （docs/feature/feature-release-checksums.md）。GitHub 自动生成的源码包不保证字节稳定，不能拿来算校验和。
+# release 事件只在用户凭据（不是 GITHUB_TOKEN）创建 release 时触发；本项目用 `gh release create` 手工发布。
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  assets:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # 只经环境变量引用 tag，不在 run 里内联 ${{ }}，避免脚本注入。
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - name: Build the source archive
+        run: |
+          git archive --format=tar.gz --prefix="multi-claude-${TAG}/" -o "multi-claude-${TAG}.tar.gz" HEAD
+          sha256sum "multi-claude-${TAG}.tar.gz" > SHA256SUMS
+          cat SHA256SUMS
+      - name: Check the archive
+        # 包里必须有包代码，且 __version__ 与 tag（去掉前缀 v）一致，防止忘记改版本号就发布。
+        run: |
+          mkdir check
+          tar -xzf "multi-claude-${TAG}.tar.gz" -C check
+          test -f "check/multi-claude-${TAG}/src/multi_claude/__init__.py"
+          version="$(python3 -c 'import re, sys; print(re.search(r"__version__ = \"([^\"]+)\"", open(sys.argv[1]).read()).group(1))' "check/multi-claude-${TAG}/src/multi_claude/__init__.py")"
+          test "v${version}" = "${TAG}" || { echo "__version__ ${version} does not match tag ${TAG}"; exit 1; }
+      - name: Upload to the release
+        run: gh release upload "${TAG}" "multi-claude-${TAG}.tar.gz" SHA256SUMS --clobber --repo "${GITHUB_REPOSITORY}"

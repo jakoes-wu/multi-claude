@@ -52,6 +52,8 @@ The `multi-claude` command runs with the `python3` found on `PATH` at install ti
 
 Alternatively: `pipx install git+https://github.com/jakoes-wu/multi-claude`.
 
+**Verified downloads.** From v0.4.0 on, every release publishes `multi-claude-<tag>.tar.gz` and `SHA256SUMS`. The remote installer downloads that archive and checks its SHA-256 before installing anything; a mismatch stops the installation. Branches and older releases are installed unverified (the installer says so); set `MULTI_CLAUDE_REQUIRE_CHECKSUM=1` to refuse them. The checksum is published next to the archive, so it protects against a damaged or altered download, not against a compromised GitHub account.
+
 Run `./install.sh --help` for all options.
 
 ## Quick start

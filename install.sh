@@ -42,6 +42,15 @@ Environment:
                        file:// URLs work, which is how the tests use it)
   MULTI_CLAUDE_REPO     GitHub repository (default: ${REPO})
   MULTI_CLAUDE_API      GitHub API base URL (default: https://api.github.com)
+  MULTI_CLAUDE_CODELOAD source archive base URL for branches and old releases
+                       (default: https://codeload.github.com)
+  MULTI_CLAUDE_SHA256   expected SHA-256 of MULTI_CLAUDE_TARBALL
+  MULTI_CLAUDE_REQUIRE_CHECKSUM=1
+                       refuse to install anything whose checksum cannot be verified
+
+Releases from v0.4.0 on publish multi-claude-<tag>.tar.gz and SHA256SUMS; the
+installer downloads that archive and checks it before installing. Branches and
+older releases are installed unverified (a note says so).
 
 Examples:
   ./install.sh                                  # from a cloned repository
@@ -135,18 +144,81 @@ else
     else wget -q "$1" -O "$2"; fi
   }
   TARBALL="${MULTI_CLAUDE_TARBALL:-}"
+  EXPECTED_SHA="${MULTI_CLAUDE_SHA256:-}"
+  API="${MULTI_CLAUDE_API:-https://api.github.com}"
+  CODELOAD="${MULTI_CLAUDE_CODELOAD:-https://codeload.github.com}"
   if [ -z "$TARBALL" ]; then
     REF="${MULTI_CLAUDE_REF:-}"
+    RELEASE_JSON=""
     if [ -z "$REF" ]; then
-      fetch "${MULTI_CLAUDE_API:-https://api.github.com}/repos/${REPO}/releases/latest" "${WORK_DIR}/release.json" 2>/dev/null \
+      fetch "${API}/repos/${REPO}/releases/latest" "${WORK_DIR}/release.json" 2>/dev/null \
         || die "no release of ${REPO} found; set MULTI_CLAUDE_REF=main to install the main branch"
-      REF="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${WORK_DIR}/release.json" | head -n 1)"
+      RELEASE_JSON="${WORK_DIR}/release.json"
+    elif "$PYTHON" -c 'import re, sys; sys.exit(0 if re.fullmatch(r"v[0-9]+[.][0-9]+[.][0-9]+([-+].*)?", sys.argv[1]) else 1)' "$REF"; then
+      # A version tag: its checksum must be checked, so failing to read the release is an error,
+      # not a reason to fall back to an unverified download.
+      fetch "${API}/repos/${REPO}/releases/tags/${REF}" "${WORK_DIR}/release.json" 2>/dev/null \
+        || die "cannot read release ${REF} of ${REPO} (network error, API rate limit or no such tag); set MULTI_CLAUDE_TARBALL to install anyway"
+      RELEASE_JSON="${WORK_DIR}/release.json"
+    fi
+    ASSET=""
+    SUMS=""
+    if [ -n "$RELEASE_JSON" ]; then
+      # Three lines: the tag, then the URLs of multi-claude-<tag>.tar.gz and SHA256SUMS (empty when not published).
+      RELEASE_INFO="$("$PYTHON" -c '
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+tag = data.get("tag_name") or ""
+urls = {asset.get("name"): asset.get("browser_download_url") or "" for asset in data.get("assets") or []}
+print(tag)
+print(urls.get("multi-claude-" + tag + ".tar.gz", ""))
+print(urls.get("SHA256SUMS", ""))
+' "$RELEASE_JSON")" || die "could not read the release information of ${REPO}"
+      REF="$(printf '%s\n' "$RELEASE_INFO" | sed -n 1p)"
+      ASSET="$(printf '%s\n' "$RELEASE_INFO" | sed -n 2p)"
+      SUMS="$(printf '%s\n' "$RELEASE_INFO" | sed -n 3p)"
       [ -n "$REF" ] || die "could not read the latest release tag; set MULTI_CLAUDE_REF to a tag or branch"
     fi
-    TARBALL="https://codeload.github.com/${REPO}/tar.gz/${REF}"
+    if [ -n "$ASSET" ] && [ -n "$SUMS" ]; then
+      TARBALL="$ASSET"
+      fetch "$SUMS" "${WORK_DIR}/SHA256SUMS" || die "download failed: ${SUMS}"
+      EXPECTED_SHA="$("$PYTHON" -c '
+import sys
+wanted = sys.argv[2]
+for line in open(sys.argv[1], encoding="utf-8"):
+    parts = line.split(None, 1)
+    # sha256sum writes "<hash>  <name>", or "<hash> *<name>" in binary mode.
+    if len(parts) == 2 and parts[1].strip().lstrip("*") == wanted:
+        print(parts[0].lower())
+        sys.exit(0)
+sys.exit(1)
+' "${WORK_DIR}/SHA256SUMS" "multi-claude-${REF}.tar.gz")" \
+        || die "SHA256SUMS of ${REF} has no entry for multi-claude-${REF}.tar.gz"
+    else
+      TARBALL="${CODELOAD}/${REPO}/tar.gz/${REF}"
+    fi
   fi
   log "downloading ${TARBALL}"
   fetch "$TARBALL" "${WORK_DIR}/src.tar.gz" || die "download failed: ${TARBALL}"
+  # Verify before extracting: a mismatch stops here, before anything installed is touched.
+  if [ -n "$EXPECTED_SHA" ]; then
+    EXPECTED_SHA="$(printf '%s' "$EXPECTED_SHA" | tr 'ABCDEF' 'abcdef')"
+    ACTUAL_SHA="$("$PYTHON" -c '
+import hashlib, sys
+digest = hashlib.sha256()
+with open(sys.argv[1], "rb") as handle:
+    for block in iter(lambda: handle.read(1 << 20), b""):
+        digest.update(block)
+print(digest.hexdigest())
+' "${WORK_DIR}/src.tar.gz")" || die "could not compute the checksum of ${TARBALL}"
+    [ "$ACTUAL_SHA" = "$EXPECTED_SHA" ] \
+      || die "checksum mismatch for ${TARBALL}: expected ${EXPECTED_SHA}, got ${ACTUAL_SHA}"
+    log "verified sha256 ${ACTUAL_SHA}"
+  elif [ "${MULTI_CLAUDE_REQUIRE_CHECKSUM:-}" = "1" ]; then
+    die "${TARBALL} has no published checksum and MULTI_CLAUDE_REQUIRE_CHECKSUM=1 is set"
+  else
+    log "note: ${TARBALL} is not verified (no checksum published)"
+  fi
   mkdir "${WORK_DIR}/src"
   tar -xzf "${WORK_DIR}/src.tar.gz" -C "${WORK_DIR}/src" || die "cannot extract ${TARBALL}"
   SRC_PKG="$(find "${WORK_DIR}/src" -type d -path '*/src/multi_claude' | head -n 1)"

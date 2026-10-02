@@ -1,5 +1,6 @@
 """方案 §8 第 15 条（移植 multi-codex §8 第 16 条）：install.sh 的本地安装、远程安装（file:// 源码包）、重复安装、中断恢复与卸载。"""
 
+import hashlib
 import json
 import os
 import shutil
@@ -168,6 +169,126 @@ class InstallTest(CliTestCase):
     def test_shellcheck(self):
         proc = subprocess.run(["shellcheck", INSTALL], stdout=subprocess.PIPE, universal_newlines=True)
         self.assertEqual(proc.returncode, 0, proc.stdout)
+
+
+
+class ChecksumTest(CliTestCase):
+    """feature-release-checksums §8：release 附件的下载与 SHA-256 校验，全部用 file:// 离线完成。
+
+    只复用 InstallTest 的辅助方法，不继承它的用例，避免原有的安装用例被重复运行。
+    """
+
+    install = InstallTest.install
+    tool = InstallTest.tool
+    make_tarball = InstallTest.make_tarball
+
+    REPO = "jakoes-wu/multi-claude"
+    TAG = "v9.9.9"
+
+    def setUp(self):
+        super().setUp()
+        # 与 InstallTest.setUp 相同的三步准备。
+        self.prefix = os.path.join(self.tmp, "prefix")
+        self.env.pop("PYTHONPATH")
+        self.env["PATH"] = self.fakebin + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin")
+        self.script = os.path.join(self.tmp, "install.sh")
+        shutil.copy(INSTALL, self.script)
+        self.api = os.path.join(self.tmp, "api")
+        self.codeload = os.path.join(self.tmp, "codeload")
+        self.assets = os.path.join(self.tmp, "assets")
+        os.makedirs(self.assets)
+        self.tarball = self.make_tarball()
+        self.asset_name = "multi-claude-{}.tar.gz".format(self.TAG)
+        shutil.copy(self.tarball, os.path.join(self.assets, self.asset_name))
+        with open(self.tarball, "rb") as handle:
+            self.sha = hashlib.sha256(handle.read()).hexdigest()
+        self.env["MULTI_CLAUDE_API"] = "file://" + self.api
+        self.env["MULTI_CLAUDE_CODELOAD"] = "file://" + self.codeload
+
+    def release(self, endpoint, with_assets=True, sums=None):
+        assets = []
+        if with_assets:
+            sums_path = os.path.join(self.assets, "SHA256SUMS")
+            self.write(sums_path, sums if sums is not None else "{}  {}\n".format(self.sha, self.asset_name))
+            assets = [{"name": self.asset_name, "browser_download_url": "file://" + os.path.join(self.assets, self.asset_name)},
+                      {"name": "SHA256SUMS", "browser_download_url": "file://" + sums_path}]
+        self.write(os.path.join(self.api, "repos", self.REPO, "releases", endpoint),
+                   json.dumps({"tag_name": self.TAG, "assets": assets}))
+
+    def run_install(self, env=None):
+        return self.install(env=env, script=self.script)
+
+    def test_verified_install(self):
+        self.release("latest")
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("verified sha256 " + self.sha, result.stdout)
+        self.assertEqual(self.tool("--version").returncode, 0)
+
+    def test_mismatch_leaves_installation_alone(self):
+        self.assertEqual(self.install().returncode, 0)  # 先装一份本地版本
+        share = os.path.join(self.prefix, "share", "multi-claude")
+        before = self.snapshot(share)
+        self.release("latest", sums="{}  {}\n".format("0" * 64, self.asset_name))
+        result = self.run_install()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("checksum mismatch", result.stderr)
+        self.assertEqual(before, self.snapshot(share))
+
+    def test_missing_entry(self):
+        self.release("latest", sums="{}  other.tar.gz\n".format(self.sha))
+        result = self.run_install()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no entry", result.stderr)
+
+    def test_binary_mode_sums(self):
+        self.release("latest", sums="{} *{}\n".format(self.sha, self.asset_name))
+        self.assertIn("verified sha256", self.run_install().stdout)
+        # 方案 T8：二进制模式与大写十六进制同时出现。
+        self.release("latest", sums="{} *{}\n".format(self.sha.upper(), self.asset_name))
+        self.assertIn("verified sha256", self.run_install().stdout)
+
+    def test_release_without_assets(self):
+        self.release("latest", with_assets=False)
+        tar_dir = os.path.join(self.codeload, self.REPO, "tar.gz")
+        os.makedirs(tar_dir)
+        shutil.copy(self.tarball, os.path.join(tar_dir, self.TAG))
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("is not verified", result.stdout)
+        result = self.run_install(env={"MULTI_CLAUDE_REQUIRE_CHECKSUM": "1"})
+        self.assertEqual(result.returncode, 1)
+
+    def test_refs(self):
+        self.release("tags/" + self.TAG)
+        result = self.run_install(env={"MULTI_CLAUDE_REF": self.TAG})
+        self.assertIn("verified sha256", result.stdout, result.stderr)
+        result = self.run_install(env={"MULTI_CLAUDE_REF": "v8.8.8"})  # tag 形式但读不到 release
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("cannot read release v8.8.8", result.stderr)
+        tar_dir = os.path.join(self.codeload, self.REPO, "tar.gz")
+        os.makedirs(tar_dir)
+        for branch in ("main", "v2-dev"):
+            with self.subTest(branch=branch):
+                shutil.copy(self.tarball, os.path.join(tar_dir, branch))
+                result = self.run_install(env={"MULTI_CLAUDE_REF": branch})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("is not verified", result.stdout)
+
+    def test_tarball_with_expected_sha(self):
+        env = {"MULTI_CLAUDE_TARBALL": "file://" + self.tarball}
+        self.assertIn("verified sha256", self.run_install(env=dict(env, MULTI_CLAUDE_SHA256=self.sha.upper())).stdout)
+        self.assertEqual(self.run_install(env=dict(env, MULTI_CLAUDE_SHA256="0" * 64)).returncode, 1)
+        self.assertEqual(self.run_install(env=dict(env, MULTI_CLAUDE_REQUIRE_CHECKSUM="1")).returncode, 1)
+
+    def test_piped_install_with_assets(self):
+        self.release("latest")
+        with open(INSTALL) as handle:
+            script = handle.read()
+        proc = subprocess.run(["sh", "-s", "--", "--prefix", self.prefix], input=script, env=self.env, cwd=ROOT,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("verified sha256", proc.stdout)
 
 
 if __name__ == "__main__":

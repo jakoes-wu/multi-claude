@@ -52,6 +52,8 @@ curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install
 
 也可以用 `pipx install git+https://github.com/jakoes-wu/multi-claude` 安装。
 
+**下载校验**：从 v0.4.0 起，每个 release 都附带 `multi-claude-<tag>.tar.gz` 和 `SHA256SUMS`。远程安装会下载这个包，先校验 SHA-256，不一致就停止安装。安装分支或更早的版本时没有校验，安装脚本会明确提示；设置 `MULTI_CLAUDE_REQUIRE_CHECKSUM=1` 可以拒绝这种安装。校验和与安装包放在同一个 release 里，只能发现下载过程中的损坏或篡改，不能防范 GitHub 账号本身被攻破。
+
 `./install.sh --help` 列出全部选项。
 
 ## 快速开始
