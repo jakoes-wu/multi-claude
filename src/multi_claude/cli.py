@@ -5,8 +5,10 @@
 """
 
 import argparse
+import difflib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -19,7 +21,7 @@ from . import (__version__, accounts, completion, doctor, hook, identity, migrat
 from .actions import error, info, warn
 from .config import (DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError, RouteRule,
                      is_unshareable, load_config, normalize_proxy, parse_config, validate_env_key, validate_name,
-                     validate_route_path, validate_value)
+                     validate_route_path, validate_value, config_path)
 from .env import account_env
 from .fsutil import expand
 from .lock import LockBusyError, WriteLock
@@ -48,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--shared-dir", help="directory whose items can be linked into accounts")
     p_init.add_argument("--shared-items", help="comma-separated items to share "
                         "(default {})".format(",".join(DEFAULT_SHARED_ITEMS)))
-    _add_dry_run(p_init)
+    _add_write_options(p_init)
 
     p_mig = sub.add_parser("migrate-default", help="turn the default ~/.claude into a named account "
                                                    "without losing its login")
@@ -78,33 +80,33 @@ def build_parser() -> argparse.ArgumentParser:
                             "the link multi-claude made is removed")
     p_add.add_argument("--shared-include", action="append", default=[], metavar="ITEM",
                        help="undo --shared-exclude for this item (repeatable)")
-    _add_dry_run(p_add)
+    _add_write_options(p_add)
 
     p_proxy = sub.add_parser("proxy", help="set the proxy of an account")
     p_proxy.add_argument("name")
     p_proxy.add_argument("value", help="port (e.g. 7901), http(s) URL, off or inherit")
-    _add_dry_run(p_proxy)
+    _add_write_options(p_proxy)
 
     p_env = sub.add_parser("env", help="set or unset extra environment variables of a launcher")
     p_env.add_argument("items", nargs="*", metavar="NAME|K=V",
                        help="account name (omit with --defaults) followed by K=V assignments")
     p_env.add_argument("--defaults", action="store_true", help="change the defaults used by every account")
     p_env.add_argument("--unset", action="append", default=[], metavar="K", help="remove a variable")
-    _add_dry_run(p_env)
+    _add_write_options(p_env)
 
     # `args` 的参数列表在 argparse 之前从 argv 里切走（见 _split_args_command），这里只解析 `--` 之前的部分。
     p_args = sub.add_parser("args", help="replace the fixed arguments of a launcher: args NAME -- [ARG ...]")
     p_args.add_argument("name", nargs="?")
     p_args.add_argument("--defaults", action="store_true", help="change the defaults used by every account")
-    _add_dry_run(p_args)
+    _add_write_options(p_args)
 
     p_remove = sub.add_parser("remove", help="unregister an account (its directory and login are kept)")
     p_remove.add_argument("name")
-    _add_dry_run(p_remove)
+    _add_write_options(p_remove)
 
     p_apply = sub.add_parser("apply", help="converge all accounts to the configuration")
     p_apply.add_argument("-f", "--file", help="use this file as the new configuration")
-    _add_dry_run(p_apply)
+    _add_write_options(p_apply)
 
     p_list = sub.add_parser("list", help="show accounts and their status")
     list_mode = p_list.add_mutually_exclusive_group()
@@ -131,16 +133,21 @@ def build_parser() -> argparse.ArgumentParser:
     route_mode.add_argument("--default", metavar="NAME", help="account used when no route matches")
     route_mode.add_argument("--no-default", action="store_true",
                             help="run plain claude when no route matches (the initial behaviour)")
-    _add_dry_run(p_route)
+    _add_write_options(p_route)
 
     p_rename = sub.add_parser("rename", help="rename an account and its launcher; the directory and login stay")
     p_rename.add_argument("old")
     p_rename.add_argument("new")
-    _add_dry_run(p_rename)
+    _add_write_options(p_rename)
 
     # mcp 的 claude 参数在 argparse 之前从 argv 里切走（见 _split_args_command）。
     p_mcp = sub.add_parser("mcp", help="run `claude mcp ...` as an account: mcp NAME [ARG ...]")
     p_mcp.add_argument("name")
+
+    # login 的 claude 参数与 mcp 一样，在 argparse 之前从 argv 里切走（见 _split_args_command）。
+    p_login = sub.add_parser("login", help="sign in to an account: runs `claude auth login` as that account: "
+                                           "login NAME [ARG ...]")
+    p_login.add_argument("name")
 
     p_which = sub.add_parser("which", help="show which account claude-auto would use in DIR (default: here)")
     p_which.add_argument("path", nargs="?", metavar="DIR")
@@ -173,9 +180,15 @@ def _add_dry_run(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dry-run", action="store_true", help="show the planned actions without changing anything")
 
 
+def _add_write_options(parser: argparse.ArgumentParser) -> None:
+    """收敛类写命令的公共选项：默认只打印有变化的动作，--verbose 列出全部。"""
+    _add_dry_run(parser)
+    parser.add_argument("--verbose", action="store_true", help="also show items that are already up to date")
+
+
 def _split_args_command(argv: List[str]) -> Tuple[List[str], Optional[List[str]]]:
     """子命令是 `args` 时，把第一个 `--` 之后的全部内容取出来作为参数列表；
-    子命令是 `mcp` 时，账号名之后的全部内容原样作为 `claude mcp` 的参数（不经 argparse）。
+    子命令是 `mcp` 或 `login` 时，账号名之后的全部内容原样作为 `claude mcp` / `claude auth login` 的参数（不经 argparse）。
 
     不能用 argparse.REMAINDER：可选位置参数加 --defaults 加 REMAINDER 时，
     `args --defaults -- --settings s` 会被解析成账号名 `--settings`（方案 §5.1.2，实测 3.10/3.11/3.13）。
@@ -188,12 +201,14 @@ def _split_args_command(argv: List[str]) -> Tuple[List[str], Optional[List[str]]
         if not token.startswith("-"):
             command_index = index
             break
-    if command_index is not None and argv[command_index] == "mcp":
+    if command_index is not None and argv[command_index] in ("mcp", "login"):
+        command = argv[command_index]
         rest = argv[command_index + 1:]
         if rest and rest[0] in ("-h", "--help"):
             return argv, []
         if not rest or rest[0].startswith("-"):
-            raise UsageError("mcp needs an account name first, e.g. `multi-claude mcp NAME list`")
+            example = "multi-claude mcp NAME list" if command == "mcp" else "multi-claude login NAME"
+            raise UsageError("{} needs an account name first, e.g. `{}`".format(command, example))
         return argv[:command_index + 2], rest[1:]
     if command_index is None or argv[command_index] != "args":
         return argv, None
@@ -216,12 +231,19 @@ def main(argv: Optional[List[str]] = None) -> int:
             error("usage: multi-claude {} COMMAND".format(hook.HOOK_COMMAND))
             return accounts.EXIT_USAGE
         return hook.main(argv[1:])
+    if not argv:
+        # 不带参数：新用户先看到怎么上手，已有配置的用户看到账号表（方案 feature-easier-onboarding §5.1.1）。
+        return cmd_overview()
+    parser = build_parser()
+    unknown = _unknown_command(parser, argv)
+    if unknown is not None:
+        error(unknown)
+        return accounts.EXIT_USAGE
     try:
         argv, launch_args = _split_args_command(argv)
     except UsageError as exc:
         error(str(exc))
         return accounts.EXIT_USAGE
-    parser = build_parser()
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
@@ -262,6 +284,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                 return accounts.EXIT_ERROR
             # 不加写锁：只读来源账号、只写目标账号的 projects/，不碰 config.json。
             return cmd_handoff(args.target, args.source, args.session, args.force, args.dry_run)
+        if args.command == "login":
+            if notice:
+                # 与 mcp 相同：迁移进行到一半时账号目录可能正在搬动。
+                error("finish the unfinished migration before running `login`")
+                return accounts.EXIT_ERROR
+            # 不加写锁：凭据由 Claude 自己写入，登录过程需要浏览器交互，可能持续很久。
+            return cmd_login(args.name, args.launch_args or [])
         if args.command == "mcp":
             if notice:
                 # 迁移进行到一半时账号目录可能正在搬动，claude 写进去的内容可能落在半迁移的目录里。
@@ -412,7 +441,7 @@ def dispatch(args: argparse.Namespace) -> int:
             new = _load_apply_file(args.file, old)
         warn_names = None
 
-    code = accounts.converge(old, new, config_exists=exists, dry_run=args.dry_run,
+    code = accounts.converge(old, new, config_exists=exists, dry_run=args.dry_run, verbose=args.verbose,
                              orphan_scope=orphan_scope, adopt_accounts=adopt_accounts)
     if code == accounts.EXIT_OK and renamed is not None and not args.dry_run:
         info("renamed {} to {} (directory {} unchanged)".format(
@@ -421,6 +450,8 @@ def dispatch(args: argparse.Namespace) -> int:
         accounts.warn_launch_settings(new, warn_names)
         if adopted_dir is not None:
             _warn_if_not_logged_in(adopted_dir)
+        if args.command == "add" and not args.dry_run:
+            _hint_next_step(new, args.name)
     return code
 
 
@@ -505,27 +536,97 @@ class _RenameConflict(Exception):
     """rename 的新名字已被另一个账号使用，对应退出码 3。"""
 
 
-def cmd_mcp(name: str, claude_args: List[str]) -> int:
-    """以账号的身份环境运行 `claude mcp …`；不带固定参数（见 env.py 说明）。"""
+def _account_process_env(name: str) -> Tuple[Optional[dict], int]:
+    """mcp 与 login 共用：检查账号可用，返回 (该账号的进程环境, 0)；不可用时返回 (None, 退出码)。"""
     config, _ = load_config()
     account = config.find(_checked_name(name))
     if account is None:
         error("account {!r} is not registered".format(name))
-        return accounts.EXIT_ERROR
+        return None, accounts.EXIT_ERROR
     directory = accounts.account_dir(config, account.name)
     if not os.path.isdir(directory):
         error("account directory does not exist: {}".format(directory))
-        return accounts.EXIT_ERROR
+        return None, accounts.EXIT_ERROR
     if account.identity == IDENTITY_DEFAULT and accounts.default_link_status(config, account) != "ok":
         # 与启动命令相同的保护：~/.claude 不再指向账号目录时，直接运行会落到别的目录。
         error("{} no longer points to {}; restore the link or run multi-claude migrate-default again".format(
             accounts.default_dir(), directory))
-        return accounts.EXIT_ERROR
+        return None, accounts.EXIT_ERROR
     process_env = account_env(config, account, os.environ)
     if shutil.which("claude", path=process_env.get("PATH")) is None:
         error("claude not found in PATH")
-        return 127
+        return None, 127
+    return process_env, accounts.EXIT_OK
+
+
+def cmd_mcp(name: str, claude_args: List[str]) -> int:
+    """以账号的身份环境运行 `claude mcp …`；不带固定参数（见 env.py 说明）。"""
+    process_env, code = _account_process_env(name)
+    if process_env is None:
+        return code
     return subprocess.call(["claude", "mcp"] + claude_args, env=process_env)
+
+
+# 只用于判断“账号名看起来像邮箱”，以便给登录页预填；不做完整的邮箱校验。
+_EMAIL_LIKE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def cmd_login(name: str, claude_args: List[str]) -> int:
+    """以账号的身份环境运行 `claude auth login …`（方案 feature-easier-onboarding §5.1.4）。
+
+    凭据由 Claude 自己写入该账号的钥匙串条目或凭据文件，本工具不读写凭据。
+    不带账号的固定参数：取多个值的选项会把 `auth login` 当成自己的值吞掉（同 mcp）。
+    """
+    process_env, code = _account_process_env(name)
+    if process_env is None:
+        return code
+    login_args = list(claude_args)
+    if _EMAIL_LIKE.match(name) and not any(arg == "--email" or arg.startswith("--email=") for arg in login_args):
+        login_args += ["--email", name]
+    return subprocess.call(["claude", "auth", "login"] + login_args, env=process_env)
+
+
+def cmd_overview() -> int:
+    """不带参数时的输出：没有配置就给上手步骤，有配置就显示账号表。"""
+    if not platform.is_supported():
+        # 与其它命令一致：不支持的平台上先报平台错误，不给出走不通的上手步骤。
+        error("this platform is not supported yet (macOS and Linux only)")
+        return accounts.EXIT_ERROR
+    if not os.path.exists(config_path()):
+        print(_GETTING_STARTED, end="")
+        return accounts.EXIT_OK
+    code = main(["list"])
+    if code == accounts.EXIT_OK:
+        print("All commands: multi-claude --help")
+    return code
+
+
+_GETTING_STARTED = """multi-claude runs several Claude Code accounts side by side, each with its own launcher.
+
+Get started:
+  multi-claude add work      create the account "work" and the launcher claude-work
+  multi-claude login work    sign in to that account
+  claude-work                start Claude Code with it
+
+Already have a login in ~/.claude? It keeps working as plain `claude`;
+`multi-claude migrate-default --help` explains how to turn it into an account.
+All commands: multi-claude --help
+"""
+
+
+def _unknown_command(parser: argparse.ArgumentParser, argv: List[str]) -> Optional[str]:
+    """第一个非选项参数不是子命令时，返回带建议的报错文字；否则返回 None 交给 argparse。"""
+    word = next((token for token in argv if not token.startswith("-")), None)
+    if word is None:
+        return None
+    names = [name for action in parser._actions if isinstance(action, argparse._SubParsersAction)
+             for name in action.choices]
+    if word in names:
+        return None
+    close = difflib.get_close_matches(word, names, n=1, cutoff=0.6)
+    if close:
+        return "unknown command {!r}; did you mean {!r}?".format(word, close[0])
+    return "unknown command {!r}; run multi-claude --help for the list".format(word)
 
 
 def cmd_which(path: Optional[str]) -> int:
@@ -591,6 +692,15 @@ def _checked_args(values: List[str]) -> List[str]:
         except ValueError as exc:
             raise UsageError(str(exc))
     return list(values)
+
+
+def _hint_next_step(config: Config, name: str) -> None:
+    """add 成功后，账号还没有登录时提示下一步；已登录或探测失败时不打扰。"""
+    account = config.find(name)
+    if account is None:
+        return
+    if identity.probe(account.identity, accounts.account_dir(config, account.name)) == identity.LOGIN_NONE:
+        info("next: multi-claude login {0}   (then start claude-{0})".format(account.name))
 
 
 def _warn_if_not_logged_in(directory: str) -> None:

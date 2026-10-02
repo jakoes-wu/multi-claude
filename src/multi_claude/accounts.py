@@ -277,10 +277,20 @@ def _plan_launcher_delete(bin_dir: str, name: str, planned: Set[str], reason: st
     return [Action(DELETE, "launcher", path, reason, lambda: os.unlink(path))]
 
 
-def execute(old: Config, new: Config, actions: List[Action], *, dry_run: bool) -> int:
-    """按 §5.1.1 的顺序执行：有冲突则全部不写；否则先写配置，再逐个执行文件动作。"""
+def execute(old: Config, new: Config, actions: List[Action], *, dry_run: bool, verbose: bool = False) -> int:
+    """按 §5.1.1 的顺序执行：有冲突则全部不写；否则先写配置，再逐个执行文件动作。
+
+    默认不打印 unchanged 的动作：一条命令会把所有账号的每一项都列出来，新用户分不清哪些是这次的改动。
+    verbose 为真时列出全部（方案 feature-easier-onboarding §5.1.5）。
+    """
+    printed = False
     for action in actions:
+        if action.status == UNCHANGED and not verbose:
+            continue
         print_action(action, dry_run=dry_run)
+        printed = True
+    if not printed:
+        info("nothing to change")
     if has_conflict(actions):
         info("nothing was changed because of the conflicts above")
         return EXIT_CONFLICT
@@ -308,10 +318,10 @@ def execute(old: Config, new: Config, actions: List[Action], *, dry_run: bool) -
 
 def converge(old: Config, new: Config, *, config_exists: bool, dry_run: bool,
              orphan_scope: Union[str, FrozenSet[str]] = NO_ORPHANS, assume_dirs: Iterable[str] = (),
-             adopt_accounts: FrozenSet[str] = frozenset()) -> int:
+             adopt_accounts: FrozenSet[str] = frozenset(), verbose: bool = False) -> int:
     actions = plan(old, new, config_exists=config_exists, orphan_scope=orphan_scope,
                    assume_dirs=assume_dirs, adopt_accounts=adopt_accounts)
-    return execute(old, new, actions, dry_run=dry_run)
+    return execute(old, new, actions, dry_run=dry_run, verbose=verbose)
 
 
 def launcher_status(config: Config, name: str) -> str:

@@ -57,17 +57,14 @@ curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install
 ## 快速开始
 
 ```sh
-# 把已有的 ~/.claude 变成名为 main 的账号（请在普通终端里运行，见下文）
-multi-claude migrate-default main
+multi-claude add work --proxy 7901   # 新建账号 work 及其启动命令，走本地 7901 端口代理
+multi-claude login work              # 登录这个账号
+claude-work                          # 用这个账号启动 Claude Code
 
-# 新增一个走本地 7901 端口代理的账号
-multi-claude add work --proxy 7901
-
-# 启动它，用 /login 登录一次
-claude-work
-
-multi-claude list
+multi-claude                         # 查看你的账号
 ```
+
+已有的 `~/.claude` 不会被改动，直接运行 `claude` 照常使用它。想把它也作为账号管理，见[迁移 `~/.claude`](#迁移-claude)（可选；需在关闭所有 Claude 会话后、在普通终端里运行）。
 
 ## 命令
 
@@ -87,12 +84,13 @@ multi-claude list
 | `multi-claude route 目录 名称`、`route 目录 --remove`、`route --default 名称`、`route --no-default` | 为 `claude-auto` 设置按目录选账号的规则 |
 | `multi-claude which [目录]` | 显示 `claude-auto` 在该目录（默认当前目录）会用哪个账号 |
 | `multi-claude rename 旧名 新名` | 给账号及其启动命令改名，目录与登录不变 |
+| `multi-claude login 名称 [参数 ...]` | 登录该账号（以它的身份运行 `claude auth login 参数 ...`；账号名形如邮箱时会用 `--email` 预填） |
 | `multi-claude mcp 名称 [参数 ...]` | 以该账号的身份运行 `claude mcp 参数 ...` |
 | `multi-claude handoff 目标 [--from 名称] [--session ID] [--force]` | 把一条会话复制到另一个账号，并打印在那边续聊的命令 |
 | `multi-claude statusline install\|uninstall 文件` | 包装设置文件里的 statusLine 命令，让 `usage` 拿到更新的数值；或还原它 |
 | `multi-claude completion bash\|zsh\|fish` | 输出 shell 补全脚本 |
 
-所有写命令都支持 `--dry-run`。`env`、`args`、`proxy` 和 `usage 名称` 对未登记的账号返回 1。
+所有写命令都支持 `--dry-run`，并且只输出有变化的项；加 `--verbose` 会同时列出已是最新的项。不带参数运行 `multi-claude` 会显示上手说明或账号列表。`env`、`args`、`proxy` 和 `usage 名称` 对未登记的账号返回 1。
 
 ### 默认位置
 

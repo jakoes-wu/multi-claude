@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `login NAME [ARG ...]`: sign in to an account by running `claude auth login`
+  with its environment; an e-mail-like account name is passed as `--email`.
+- Running `multi-claude` without arguments prints a short guide (no
+  configuration yet) or the account list.
+- A mistyped command gets a suggestion (`did you mean 'list'?`).
+- After `add`, an account without a login gets a hint to run `login`.
+
+### Changed
+
+- Write commands print only the items that change, or `nothing to change`;
+  `--verbose` lists everything as before.
+- A proxy value that is neither a port nor a URL gets an error that shows
+  the accepted forms.
+- README: the quick start begins with `add` and `login`; migrating
+  `~/.claude` is described as optional.
+
 ## [0.2.2] - 2026-10-01
 
 ### Changed
