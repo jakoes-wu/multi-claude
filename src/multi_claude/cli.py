@@ -18,8 +18,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
-from . import (__version__, accounts, completion, doctor, history, hook, identity, launcher, migrate, platform,
-               restore, routes, sessions, shellpath, statusline, usage)
+from . import (__version__, accounts, bundle, completion, doctor, history, hook, identity, launcher, migrate,
+               platform, restore, routes, sessions, shellpath, statusline, usage)
 from .actions import error, info, warn
 from .config import (DEFAULT_SHARED_DIR, DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError, RouteRule,
                      is_unshareable, load_config, normalize_proxy, parse_config, validate_env_key, validate_name,
@@ -49,6 +49,7 @@ COMMAND_GROUPS = [
         ("proxy, env, args", "set the proxy, extra variables or fixed arguments of a launcher"),
         ("rename, remove", "rename or unregister an account"),
         ("migrate-default, restore", "turn the existing ~/.claude into an account, or back"),
+        ("export, import", "copy an account's settings to a file and back (no logins)"),
     ]),
     ("Everyday", [
         ("usage", "5-hour and 7-day usage of each account"),
@@ -234,6 +235,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_restore.add_argument("--skip-process-check", action="store_true",
                            help="do not check whether Claude Code is running (at your own risk)")
     _add_dry_run(p_restore)
+
+    p_export = sub.add_parser("export", description="write the settings of an account to FILE (.tar.gz): "
+                                                    "settings.json, CLAUDE.md, agents, commands, skills, "
+                                                    "output-styles and its MCP servers; never logins or sessions")
+    p_export.add_argument("name")
+    p_export.add_argument("file", metavar="FILE")
+
+    p_import = sub.add_parser("import", description="import a file written by `export` into an existing account")
+    p_import.add_argument("file", metavar="FILE")
+    p_import.add_argument("name")
+    p_import.add_argument("--force", action="store_true",
+                          help="back up and replace items and MCP servers that differ")
+    _add_dry_run(p_import)
 
     p_completion = sub.add_parser("completion", description="print a shell completion script")
     p_completion.add_argument("shell", choices=completion.SHELLS)
@@ -464,13 +478,21 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 def _blocked_by_migration(args: argparse.Namespace, notice: Optional[str]) -> bool:
     # 迁移中途禁止其它写命令，防止根目录或账号在迁移过程中被改动。
-    if notice and args.command != "migrate-default" and not args.dry_run:
+    # export 没有 --dry-run；用 getattr，免得写命令里少一个选项就在这里崩溃
+    if notice and args.command != "migrate-default" and not getattr(args, "dry_run", False):
         error("finish the unfinished migration before running `{}`".format(args.command))
         return True
     return False
 
 
 def dispatch(args: argparse.Namespace) -> int:
+    if args.command in ("export", "import"):
+        # 两者都只读写这个账号的白名单条目与 .claude.json 的 mcpServers，不改 config.json 与启动命令。
+        config, _ = load_config()
+        account = _registered(config, _checked_name(args.name))
+        if args.command == "export":
+            return bundle.export_account(config, account, args.file)
+        return bundle.import_account(config, account, args.file, args.force, args.dry_run)
     if args.command == "restore":
         return restore.restore(_checked_name(args.name), args.skip_process_check, args.dry_run)
     if args.command == "migrate-default":

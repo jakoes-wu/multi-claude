@@ -20,6 +20,7 @@ POSITIONAL_KINDS = {
     "route": ["dir", "name"], "which": ["dir"], "rename": ["name"], "mcp": ["name"],
     "statusline": ["statusline", "file"], "handoff": ["name"], "login": ["name"], "set": ["name"],
     "run": ["name"], "path": ["name"], "restore": ["name"], "code": ["name", "file"],
+    "export": ["name", "file"], "import": ["file", "name"],
 }
 # 选项值是路径、应按文件补全的选项。
 PATH_OPTIONS = ("-f", "--file", "--root", "--bin-dir", "--shared-dir")

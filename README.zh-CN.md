@@ -180,6 +180,32 @@ multi-claude set work --shared-include skills    # 重新链接
 
 **`skills/synced/`。** Claude Code 把从 claude.ai 同步来的技能存放在 `skills/synced/` 下，按组织和账号分桶。账号的 `skills` 是真实目录时，开启共享判为冲突，multi-claude 不移动任何内容。你可以自己把该账号的 `skills/synced/<桶>` 移进共享目录的 `skills/synced/`：不同账号的桶名不同，不会互相覆盖；但此后这个账号同步下来的技能也会写进共享目录。
 
+### 导出与导入设置
+
+```sh
+multi-claude export work ~/work-settings.tar.gz     # 在这台机器上导出
+multi-claude import ~/work-settings.tar.gz client   # 导入到另一个（已创建的）账号，本机或别的机器都可以
+```
+
+`export` 把账号的 `settings.json`、`CLAUDE.md`、`agents`、`commands`、`skills`、`output-styles`，以及 `.claude.json` 里的 MCP 服务器（只取 `mcpServers` 一项）写进一个只有你能读的 `.tar.gz`。登录信息、`.claude.json` 的其它内容、会话、历史和插件缓存一律不包含。是软链的条目（共享条目）会被跳过。`settings.json` 或 MCP 配置里有 `API_KEY`、`Authorization` 这类名字下的值时，`export` 会列出这些名字（不显示值）：请像对待密码一样保管这个文件。
+
+`import` 把这些条目复制到一个已用 `add` 创建的账号，并把 MCP 服务器加进它的 `.claude.json`。已存在且内容不同的条目或 MCP 服务器算冲突：什么都不改，并列出全部冲突。加 `--force` 时，每一项先改名为 `<名称>.multi-claude-bak.<时间>` 再替换。是共享软链的条目永远不会被替换，请先对它取消共享。`--dry-run` 只显示计划。导入 MCP 服务器后，请重启该账号正在运行的 Claude 会话：它们持有自己的 `.claude.json` 副本，可能把改动覆盖掉。
+
+插件的选择记在 `settings.json`（`enabledPlugins`、`extraKnownMarketplaces`）里，会随之一起导入；Claude Code 会在新账号里重新下载插件。
+
+### 让所有账号共用 MCP 服务器、插件和设置
+
+共享软链只能共享文件和目录。所有账号都要有的设置和 MCP 服务器，改为加在每个启动命令的参数里：
+
+```sh
+multi-claude args --defaults -- --mcp-config ~/.claude-shared/mcp.json --settings ~/.claude-shared/settings.json
+multi-claude env --defaults CLAUDE_CODE_PLUGIN_CACHE_DIR=~/.claude-shared/plugins
+```
+
+- `--settings` 与每个账号自己的 `settings.json` 合并：共享文件里有的键以它为准，其它键保留。`enabledPlugins`、`extraKnownMarketplaces`、`permissions`、`env` 都可以放在这里。
+- `--mcp-config` 从 JSON 文件（`{"mcpServers": {...}}`）加载 MCP 服务器，与每个账号自己的服务器一起生效。它接受多个值，所以后面要再跟一个选项（如上面的 `--settings`）；否则 multi-claude 会提示。
+- `CLAUDE_CODE_PLUGIN_CACHE_DIR` 改变插件目录（插件市场与插件缓存），插件只需为所有账号下载一次。
+
 ### 按目录选账号
 
 ```sh
@@ -385,6 +411,8 @@ multi-claude remove main         # 注销账号
 | `multi-claude init [--root DIR] [--bin-dir DIR] [--shared-dir DIR] [--shared-items A,B]` | 创建或修改全局设置 |
 | `multi-claude migrate-default [名称] [--copy] [--keep-backup] [--proxy P] [--skip-process-check]` | 把 `~/.claude` 变成一个账号；不给名称时用其登录邮箱 |
 | `multi-claude restore 名称 [--skip-process-check] [--dry-run]` | 撤销 `migrate-default`：把账号移回 `~/.claude` 并注销，登录保持不变 |
+| `multi-claude export 名称 文件` | 把账号的设置、`CLAUDE.md`、agents、commands、skills、output styles 和 MCP 服务器写进文件；不含登录与会话 |
+| `multi-claude import 文件 名称 [--force] [--dry-run]` | 把这样的文件导入已有账号；有冲突时拒绝，除非加 `--force`（会先备份） |
 | `multi-claude add 名称 [--proxy P] [--shared [目录] \| --no-shared] [--adopt] [--shared-exclude 项] [--shared-include 项] [--config-from 其它账号]` | 新增账号、登记已有目录或修改其选项；`--config-from` 从另一个账号复制一次 `settings.json`；`--shared 目录` 同时把它设为所有账号的共享目录（默认 `~/.claude-shared`）；`--shared-exclude` 让这个账号不共享某一项，`--shared-include` 撤销 |
 | `multi-claude set 名称 [--proxy P] [--shared [目录] \| --no-shared] [--shared-exclude 项] [--shared-include 项]` | 修改已有账号，选项同 `add`（没有 `--adopt`）；账号未登记时返回 1 |
 | `multi-claude proxy 名称 端口\|URL\|off\|inherit` | 设置账号代理 |
