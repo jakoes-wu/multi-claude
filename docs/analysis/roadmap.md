@@ -67,6 +67,12 @@
 | 撤销迁移 | `restore NAME`：按实际状态续跑，登录不变 | 同上 | v0.5.0（PR #26） |
 | 两处便利 | `migrate-default` 名称可省（取登录邮箱）；`add --config-from` 复制 `settings.json` | 同上 | v0.5.0（PR #26） |
 
+### 2.6 按账号打开 VS Code（v0.6.0）
+
+| 项 | 实现 | 设计文档 | 发布 |
+| ---- | ---- | ---- | ---- |
+| `code NAME [PATH]` | 以账号环境与独立的用户数据目录启动 VS Code；扩展按该账号的 `CLAUDE_CONFIG_DIR` 工作（已实测） | `feature-vscode-launch.md` | 待发布 |
+
 ## 3. 待定（未排期）
 
 - `use NAME`（切换 `~/.claude` 指向的账号）：等用户决定。直接运行 `claude` 时钥匙串登录（macOS）、`~/.claude.json` 与 default 账号启动命令的指向检查都不跟着 `~/.claude` 走，切换后会混用两个账号的状态，见 `feature-everyday-commands.md` §6、§10。
