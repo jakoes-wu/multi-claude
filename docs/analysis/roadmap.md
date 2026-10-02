@@ -71,7 +71,7 @@
 
 | 项 | 实现 | 设计文档 | 发布 |
 | ---- | ---- | ---- | ---- |
-| `code NAME [PATH]` | 以账号环境与独立的用户数据目录启动 VS Code；扩展按该账号的 `CLAUDE_CONFIG_DIR` 工作（已实测） | `feature-vscode-launch.md` | 待发布 |
+| `code NAME [PATH]` | 以账号环境与独立的用户数据目录启动 VS Code；扩展按该账号的 `CLAUDE_CONFIG_DIR` 工作（已实测） | `feature-vscode-launch.md` | v0.6.0（PR #28） |
 
 ## 3. 待定（未排期）
 
