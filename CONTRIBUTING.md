@@ -47,6 +47,17 @@ resuming from it is covered.
 4. Confirm both assets are on the release page and that
    `curl -fsSL .../install.sh | sh` prints `verified sha256` before announcing
    the release. Until the assets are uploaded, installs are unverified.
+5. The `PyPI` workflow builds the package `multi-claude-cli` and publishes it
+   through Trusted Publishing (environment `pypi`). Check that
+   `pipx install multi-claude-cli` installs the new version.
+6. Update `Formula/multi-claude.rb` in `jakoes-wu/homebrew-tap`: point `url`
+   at the new release asset and set `sha256` to its value in `SHA256SUMS`.
+   Check it with `brew install --build-from-source`, `brew test` and
+   `brew audit --strict`.
+7. If the commands shown in the demo changed, run
+   `python3 scripts/make-assets.py` (needs Pillow) and commit the new
+   `docs/assets/`. The script works in a temporary HOME and never touches
+   your own accounts.
 
 ## Pull requests
 

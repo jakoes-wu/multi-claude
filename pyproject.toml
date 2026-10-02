@@ -3,18 +3,28 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "multi-claude"
+# PyPI 上 multi-claude 已被别的项目占用，发布名用 multi-claude-cli；import 包与命令名仍是 multi_claude / multi-claude。
+name = "multi-claude-cli"
 dynamic = ["version"]
 description = "Run several Claude Code accounts side by side: separate CLAUDE_CONFIG_DIR directories, launchers, proxies, environment variables and arguments."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.8"
+keywords = ["claude", "claude-code", "anthropic", "multi-account", "account-switcher", "proxy", "cli"]
 classifiers = [
     "Environment :: Console",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Utilities",
 ]
 
 [project.scripts]
@@ -22,6 +32,8 @@ multi-claude = "multi_claude.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/jakoes-wu/multi-claude"
+Changelog = "https://github.com/jakoes-wu/multi-claude/blob/main/CHANGELOG.md"
+Issues = "https://github.com/jakoes-wu/multi-claude/issues"
 
 [tool.setuptools.dynamic]
 version = {attr = "multi_claude.__version__"}
