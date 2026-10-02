@@ -10,6 +10,7 @@ All notable changes to this project are documented here. The format follows
 
 - README: install from PyPI with `pipx install multi-claude-cli`, and a PyPI
   badge.
+- README: install with Homebrew, `brew install jakoes-wu/tap/multi-claude`.
 
 ## [0.4.0] - 2026-10-02
 

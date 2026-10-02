@@ -72,6 +72,8 @@ The `multi-claude` command runs with the `python3` found on `PATH` at install ti
 
 Alternatively, from PyPI: `pipx install multi-claude-cli` (upgrade with `pipx upgrade multi-claude-cli`). The command is still `multi-claude`. Use either pipx or the installer, not both: they put the same command in `~/.local/bin`.
 
+With Homebrew: `brew install jakoes-wu/tap/multi-claude` (upgrade with `brew upgrade multi-claude`). It installs into Homebrew's own prefix, so remove other installations first to avoid two `multi-claude` commands on your `PATH`.
+
 **Verified downloads.** From v0.4.0 on, every release publishes `multi-claude-<tag>.tar.gz` and `SHA256SUMS`. The remote installer downloads that archive and checks its SHA-256 before installing anything; a mismatch stops the installation. Branches and older releases are installed unverified (the installer says so); set `MULTI_CLAUDE_REQUIRE_CHECKSUM=1` to refuse them. The checksum is published next to the archive, so it protects against a damaged or altered download, not against a compromised GitHub account.
 
 Run `./install.sh --help` for all options.
@@ -296,7 +298,7 @@ If a migration stops with an error and you want to abandon it: the error message
 
 ### How do I upgrade multi-claude?
 
-With pipx, run `pipx upgrade multi-claude-cli`. Otherwise run the installer again: `curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install.sh | sh`, or `./install.sh` from an updated clone. It replaces only the tool; your configuration, accounts and launchers stay. When a release changes what launchers contain, `multi-claude doctor` reports them as stale and `multi-claude apply` rewrites them.
+With pipx, run `pipx upgrade multi-claude-cli`; with Homebrew, `brew upgrade multi-claude`. Otherwise run the installer again: `curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install.sh | sh`, or `./install.sh` from an updated clone. It replaces only the tool; your configuration, accounts and launchers stay. When a release changes what launchers contain, `multi-claude doctor` reports them as stale and `multi-claude apply` rewrites them.
 
 ### Which account does plain `claude` use?
 
