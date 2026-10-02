@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-02
+
 ### Added
 
 - Every release publishes `multi-claude-<tag>.tar.gz` and `SHA256SUMS`
@@ -172,7 +174,8 @@ First release (macOS and Linux).
   program (`.../@anthropic-ai/claude-code/bin/claude.exe`) and the Linux
   systemd user service of the background supervisor.
 
-[Unreleased]: https://github.com/jakoes-wu/multi-claude/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/jakoes-wu/multi-claude/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/jakoes-wu/multi-claude/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/jakoes-wu/multi-claude/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/jakoes-wu/multi-claude/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/jakoes-wu/multi-claude/compare/v0.2.1...v0.2.2
