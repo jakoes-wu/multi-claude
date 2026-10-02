@@ -5,7 +5,6 @@ import json
 import os
 import stat
 import subprocess
-import sys
 import unittest
 
 from helpers import CliTestCase
