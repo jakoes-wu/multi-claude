@@ -18,8 +18,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
-from . import (__version__, accounts, completion, doctor, hook, identity, launcher, migrate, platform, restore,
-               routes, sessions, shellpath, statusline, usage)
+from . import (__version__, accounts, completion, doctor, history, hook, identity, launcher, migrate, platform,
+               restore, routes, sessions, shellpath, statusline, usage)
 from .actions import error, info, warn
 from .config import (DEFAULT_SHARED_DIR, DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError, RouteRule,
                      is_unshareable, load_config, normalize_proxy, parse_config, validate_env_key, validate_name,
@@ -176,6 +176,10 @@ def build_parser() -> argparse.ArgumentParser:
                                            "(from Claude Code's own cache; never reads credentials)")
     p_usage.add_argument("name", nargs="?")
     p_usage.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    p_usage.add_argument("--history", action="store_true",
+                         help="show token usage counted from the session files on this machine instead")
+    p_usage.add_argument("--days", type=int, metavar="N", help="with --history: the last N days (default 7)")
+    p_usage.add_argument("--by", choices=("day", "model"), help="with --history: group by day (default) or model")
 
     p_doctor = sub.add_parser("doctor", description="check the accounts, launchers and environment (read-only)")
     p_doctor.add_argument("--json", action="store_true", help="print machine-readable JSON")
@@ -381,6 +385,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.command == "list":
             return cmd_list(verbose=args.verbose, as_json=args.json, names_only=args.names)
         if args.command == "usage":
+            if args.history:
+                return cmd_usage_history(args.name, args.days, args.by or "day", args.json)
+            if args.days is not None or args.by is not None:
+                raise UsageError("--days and --by need --history")
             return cmd_usage(args.name, args.json)
         if args.command == "which":
             return cmd_which(args.path)
@@ -797,7 +805,7 @@ def _account_process_env(name: str) -> Tuple[Optional[dict], int]:
     if process_env is None:
         return None, code
     if shutil.which("claude", path=process_env.get("PATH")) is None:
-        error("claude not found in PATH")
+        error("claude not found in PATH" + _CLAUDE_NOT_FOUND_HINT)
         return None, 127
     return process_env, accounts.EXIT_OK
 
@@ -843,7 +851,14 @@ def cmd_run(name: Optional[str], command: List[str]) -> int:
     if not command:
         # 固定参数按启动命令的规则展开 `~`（launcher.render），两种启动方式收到的参数才逐项相同。
         command = ["claude"] + [launcher.expand_value(arg) for arg in config.effective_args(account)]
-    return _exec_as(config, account, command)
+    return _exec_as(config, account, command,
+                    not_found_hint=_CLAUDE_NOT_FOUND_HINT if command[0] == "claude" else "")
+
+
+# 找不到 claude 时附上的官方安装方法（https://code.claude.com/docs/en/setup，2026-10-03 核对）。
+# 只用于 multi-claude 自己的报错：启动命令里的文字不改，改了所有启动命令都会变成过期。
+_CLAUDE_NOT_FOUND_HINT = ("; install Claude Code: curl -fsSL https://claude.ai/install.sh | bash "
+                          "(other ways: https://code.claude.com/docs/en/setup)")
 
 
 def _exec_as(config: Config, account: Account, command: List[str], not_found_hint: str = "") -> int:
@@ -1285,14 +1300,15 @@ def _print_brief_list(config: Config) -> int:
         # 与完整输出相同：LOGIN 与由它得出的 STATUS 都按正式服务探测，这时可能不准。
         warn("CLAUDE_CODE_CUSTOM_OAUTH_URL is set; LOGIN assumes the production service and may be wrong")
     now = datetime.now(timezone.utc)
-    rows = [("NAME", "LOGIN", "PROXY", "SHARED", "5H", "7D", "STATUS")]
+    rows = [("NAME", "LOGIN", "PROXY", "SHARED", "5H", "7D", "LAST USED", "STATUS")]
     has_problem = False
     for entry in _account_entries(config):
         report = usage.read_account_usage(config, config.find(entry["name"]), now)
         status = _status_cell(entry)
         has_problem = has_problem or status != "ok"
         rows.append((entry["name"], entry["login"], entry["proxy"], _shared_cell(entry),
-                     _window_cell(report.five_hour, now), _window_cell(report.seven_day, now), status))
+                     _window_cell(report.five_hour, now), _window_cell(report.seven_day, now),
+                     _last_used_cell(entry["last_used"], now), status))
     _print_table(rows)
     _print_routes(config)
     if has_problem:
@@ -1359,6 +1375,8 @@ def _account_entries(config: Config, with_usage: bool = False) -> List[dict]:
             "link": accounts.default_link_status(config, account) if is_default else None,
             "keychain_service": identity.service_name(account.identity, directory),
             "credentials_file": identity.credentials_file(directory),
+            # history.jsonl 与会话文件的最大 mtime；只 stat 不读内容（方案 feature-usage-history §5.1.3）
+            "last_used": _iso(history.last_used(directory)),
         }
         if with_usage:
             entry["usage"] = usage.report_to_dict(usage.read_account_usage(config, account, now), now)
@@ -1451,6 +1469,86 @@ def _updated_cell(name: str, report: usage.UsageReport, now: datetime) -> str:
     if report.status == usage.STATUS_STALE:
         age += " (stale)"
     return age + (" (statusline)" if report.source == usage.SOURCE_STATUSLINE else "")
+
+
+def _iso(moment: Optional[datetime]) -> Optional[str]:
+    return None if moment is None else moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _last_used_cell(value: Optional[str], now: datetime) -> str:
+    if value is None:
+        return "-"
+    moment = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    return _format_age(now - moment)
+
+
+_HISTORY_COLUMNS = ("INPUT", "OUTPUT", "CACHE READ", "CACHE WRITE", "REPLIES")
+
+
+def cmd_usage_history(name: Optional[str], days: Optional[int], by: str, as_json: bool) -> int:
+    """按天或按模型汇总本机会话记录里的 token 用量（方案 feature-usage-history §5.1.2）。
+
+    只读计数字段，不输出对话内容、不联网、不读凭据。各账号分别计数；TOTAL 跨账号按回复 ID 去重，
+    因为 handoff 复制过的会话在两个账号里都有同样的回复。
+    """
+    days = 7 if days is None else days
+    if not 1 <= days <= 366:
+        raise UsageError("--days must be between 1 and 366")
+    config, exists = load_config()
+    selected = list(config.accounts.values()) if exists else []
+    if name is not None:
+        account = config.find(_checked_name(name)) if exists else None
+        if account is None:
+            error("account {!r} is not registered".format(name))
+            return accounts.EXIT_ERROR
+        selected = [account]
+    local_now = datetime.now().astimezone()
+    start_local = (local_now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    since = start_local.astimezone(timezone.utc)
+    per_account = []
+    combined: dict = {}
+    skipped = 0
+    for account in selected:
+        replies, unreadable = history.scan(accounts.account_dir(config, account.name), since)
+        skipped += unreadable
+        per_account.append((account.name, history.summarize(replies.values(), by)))
+        for reply_id, reply in replies.items():
+            # 同一回复出现在多个账号（handoff）时只算一次，计数仍按各项取最大值合并
+            combined[reply_id] = reply if reply_id not in combined else history.merge(combined[reply_id], reply)
+    if skipped:
+        warn("skipped {} session file(s) that could not be read".format(skipped))
+    total = history.summarize(combined.values(), by)
+    if as_json:
+        _print_json({"schema_version": 1, "days": days, "by": by,
+                     "accounts": [{"name": account_name, "rows": [row._asdict() for row in rows]}
+                                  for account_name, rows in per_account],
+                     "total": [row._asdict() for row in total]})
+        return accounts.EXIT_OK
+    if not exists:
+        info("no configuration yet at {}; run `multi-claude add NAME` to start".format(
+            os.path.join(platform.state_dir(), "config.json")))
+        return accounts.EXIT_OK
+    for account_name, rows in per_account:
+        _print_history_block(account_name, rows, by, days)
+    if len(per_account) > 1:
+        _print_history_block("TOTAL (each reply counted once)", total, by, days)
+    print("Counted from the session files on this machine (not other machines, not deleted sessions); "
+          "multi-claude reads only the token counts, never connects to the network and never reads credentials.")
+    return accounts.EXIT_OK
+
+
+def _print_history_block(title: str, rows, by: str, days: int) -> None:
+    print("{}:".format(title))
+    if not rows:
+        print("  no replies in the last {} day{}".format(days, "" if days == 1 else "s"))
+        return
+    table = [("  " + ("DATE" if by == "day" else "MODEL"),) + _HISTORY_COLUMNS]
+    for row in rows:
+        table.append(("  " + row.key,) + tuple("{:,}".format(value) for value in row[1:]))
+    widths = [max(len(line[index]) for line in table) for index in range(len(table[0]))]
+    for line in table:
+        cells = [line[0].ljust(widths[0])] + [cell.rjust(width) for cell, width in zip(line[1:], widths[1:])]
+        print("  ".join(cells).rstrip())
 
 
 def _format_age(delta) -> str:

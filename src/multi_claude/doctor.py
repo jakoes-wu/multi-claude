@@ -100,7 +100,8 @@ def _load() -> Tuple[Optional[Config], Check]:
 def _check_claude_on_path() -> Check:
     found = shutil.which("claude")
     if found is None:
-        return Check("claude-on-path", LEVEL_ERROR, "claude", "`claude` is not on PATH; install Claude Code")
+        return Check("claude-on-path", LEVEL_ERROR, "claude", "`claude` is not on PATH; install Claude Code: curl -fsSL https://claude.ai/install.sh "
+                     "| bash (other ways: https://code.claude.com/docs/en/setup)")
     return Check("claude-on-path", LEVEL_OK, "claude", found)
 
 

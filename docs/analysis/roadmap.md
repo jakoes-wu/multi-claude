@@ -73,6 +73,14 @@
 | ---- | ---- | ---- | ---- |
 | `code NAME [PATH]` | 以账号环境与独立的用户数据目录启动 VS Code；扩展按该账号的 `CLAUDE_CONFIG_DIR` 工作（已实测） | `feature-vscode-launch.md` | v0.6.0（PR #28） |
 
+### 2.7 本地用量历史（v0.7.0）
+
+| 项 | 实现 | 设计文档 | 发布 |
+| ---- | ---- | ---- | ---- |
+| token 用量历史 | `usage --history`：只读扫描本机会话记录，按回复 ID 去重，按天或模型汇总 | `feature-usage-history.md` | 待发布 |
+| 最近使用时间 | `list` 的 `LAST USED` | 同上 | 待发布 |
+| 安装提示 | 找不到 claude 时给出官方安装命令 | 同上 | 待发布 |
+
 ## 3. 待定（未排期）
 
 - `use NAME`（切换 `~/.claude` 指向的账号）：**不做**（用户 2026-10-03 决定）。直接运行 `claude` 时钥匙串登录（macOS）、`~/.claude.json` 与 default 账号启动命令的指向检查都不跟着 `~/.claude` 走，切换后会混用两个账号的状态；改用各账号的启动命令，或 `route --default NAME` 加 `claude-auto`。见 `feature-everyday-commands.md` §6、§10。
