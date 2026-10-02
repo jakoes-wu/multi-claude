@@ -77,9 +77,9 @@
 
 | 项 | 实现 | 设计文档 | 发布 |
 | ---- | ---- | ---- | ---- |
-| token 用量历史 | `usage --history`：只读扫描本机会话记录，按回复 ID 去重，按天或模型汇总 | `feature-usage-history.md` | 待发布 |
-| 最近使用时间 | `list` 的 `LAST USED` | 同上 | 待发布 |
-| 安装提示 | 找不到 claude 时给出官方安装命令 | 同上 | 待发布 |
+| token 用量历史 | `usage --history`：只读扫描本机会话记录，按回复 ID 去重，按天或模型汇总 | `feature-usage-history.md` | v0.7.0（PR #32） |
+| 最近使用时间 | `list` 的 `LAST USED` | 同上 | v0.7.0（PR #32） |
+| 安装提示 | 找不到 claude 时给出官方安装命令 | 同上 | v0.7.0（PR #32） |
 
 ## 3. 待定（未排期）
 
