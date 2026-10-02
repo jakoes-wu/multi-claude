@@ -168,6 +168,7 @@ multi-claude statusline install ~/.claude/settings.json
 命令会变成 `<multi-claude 路径> statusline-hook '<原命令>'`。钩子按 `CLAUDE_CONFIG_DIR` 认出当前账号，把用量存进 `~/.config/multi-claude/usage/`，再用 `/bin/sh -c` 执行原命令，状态栏的显示与行为不变。只保存百分比与重置时间，状态栏数据里的其它内容不落盘。之后 `usage` 取缓存与状态栏两者中较新的一份，后者标注 `(statusline)`；`--json` 有 `source` 字段。
 
 - 只能包装已有 `"type": "command"` 状态栏的文件；每次改动前在同目录备份（`*.multi-claude-bak.*`），只改 `statusLine.command`。文件是软链时改它指向的文件。
+- 已经在运行的 Claude 会话仍用旧的状态栏；`install` 之后新开的会话收到第一次回复后，才开始记录用量。
 - 多个设置文件都定义了 `statusLine` 时，包装生效的那份（例如启动命令固定参数里用 `--settings` 传入的文件）。
 - 卸载 multi-claude 前先运行 `multi-claude statusline uninstall 文件`，否则包装命令找不到可执行文件，状态栏会变空。multi-claude 换了位置后再运行一次 `install` 即可更新路径。
 
