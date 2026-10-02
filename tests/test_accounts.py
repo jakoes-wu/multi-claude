@@ -463,7 +463,9 @@ class SharedTest(CliTestCase):
         self.ok("add", "work")
         account = os.path.join(self.root, "work")
         result = self.ok("add", "work", "--shared")
-        self.assertIn("not present in shared dir", result.out)  # rules 不在共享目录里
+        # rules 不在共享目录里：这类跳过提示默认不打印，--verbose 才列出（方案 feature-set-command §5.1.4）。
+        self.assertNotIn("not present in shared dir", result.out)
+        self.assertIn("not present in shared dir", self.ok("add", "work", "--verbose").out)
         self.assertTrue(os.path.islink(os.path.join(account, "skills")))
         self.assertEqual(self.managed_links("work"), ["CLAUDE.md", "skills"])
         self.ok("add", "work", "--no-shared")

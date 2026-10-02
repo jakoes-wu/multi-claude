@@ -15,6 +15,8 @@ from .fsutil import atomic_write, expand
 
 CONFIG_VERSION = 1
 DEFAULT_SHARED_ITEMS = ["agents", "commands", "skills", "CLAUDE.md"]
+# add/set --shared 在未设置共享目录时使用的默认值；原样写进配置，使用时再展开 ~。
+DEFAULT_SHARED_DIR = "~/.claude-shared"
 # 账号私有的状态：凭据、全局状态、会话与历史、运行时状态。共享出去会让一个账号的登录或会话
 # 被所有账号读写，所以不允许出现在 shared.items 里（方案 feature-shared-exclude §5.1.4）。
 UNSHAREABLE_ITEMS = (".credentials.json", ".claude.json", "settings.local.json", "projects", "history.jsonl",

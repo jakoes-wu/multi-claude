@@ -106,9 +106,11 @@ multi-claude env work MAX_THINKING_TOKENS=8000 --unset OLD_VAR
 ### Shared resources
 
 ```sh
-multi-claude init --shared-dir ~/.claude-shared
-multi-claude add work --shared
+multi-claude add work --shared            # share from ~/.claude-shared (or the shared directory already set)
+multi-claude set work --shared ~/claude-common  # make ~/claude-common the shared directory for every account
 ```
+
+Put the `agents`, `commands`, `skills` or `CLAUDE.md` you want every account to see into the shared directory; multi-claude does not create or fill it, and tells you when it has none of them yet. Changing the directory with `--shared DIR` (or `init --shared-dir DIR`) moves the links of every shared account.
 
 The default items are `agents`, `commands`, `skills` and `CLAUDE.md`; only the items listed in `shared.items` are linked. multi-claude creates the missing links and remembers which links it created. Turning sharing off removes only those links; links you made yourself are left alone. A real file or directory at a link location is a conflict and is never overwritten.
 
@@ -117,8 +119,8 @@ If you already linked an account to the shared directory by hand, `multi-claude 
 To keep one item out of a single account, for example so that it has its own `skills`:
 
 ```sh
-multi-claude add work --shared-exclude skills    # removes the skills link multi-claude created
-multi-claude add work --shared-include skills    # links it again
+multi-claude set work --shared-exclude skills    # removes the skills link multi-claude created
+multi-claude set work --shared-include skills    # links it again
 ```
 
 The other items stay shared, and the shared directory is not touched. A directory or link you put there yourself is left alone. `list` shows `yes (not: skills)`. With `apply -f`, an account without `shared_exclude` in the file shares every item again.
@@ -253,7 +255,8 @@ If a migration stops with an error and you want to abandon it: the error message
 | ---- | ---- |
 | `multi-claude init [--root DIR] [--bin-dir DIR] [--shared-dir DIR] [--shared-items A,B]` | Create or change global settings. |
 | `multi-claude migrate-default NAME [--copy] [--keep-backup] [--proxy P] [--skip-process-check]` | Turn `~/.claude` into an account. |
-| `multi-claude add NAME [--proxy P] [--shared \| --no-shared] [--adopt] [--shared-exclude ITEM] [--shared-include ITEM]` | Add an account, adopt an existing directory, or change its options. `--shared-exclude` keeps one shared item out of this account; `--shared-include` undoes it. |
+| `multi-claude add NAME [--proxy P] [--shared [DIR] \| --no-shared] [--adopt] [--shared-exclude ITEM] [--shared-include ITEM]` | Add an account, adopt an existing directory, or change its options. `--shared DIR` also makes DIR the shared directory for every account (default `~/.claude-shared`). `--shared-exclude` keeps one shared item out of this account; `--shared-include` undoes it. |
+| `multi-claude set NAME [--proxy P] [--shared [DIR] \| --no-shared] [--shared-exclude ITEM] [--shared-include ITEM]` | Change an existing account; same options as `add` without `--adopt`. Returns 1 for an account that is not registered. |
 | `multi-claude proxy NAME PORT\|URL\|off\|inherit` | Set an account's proxy. |
 | `multi-claude env (NAME \| --defaults) [K=V ...] [--unset K ...]` | Set or remove extra environment variables. |
 | `multi-claude args (NAME \| --defaults) -- [ARG ...]` | Replace the fixed arguments; `--` with nothing after it clears them. |

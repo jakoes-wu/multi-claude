@@ -285,7 +285,7 @@ def execute(old: Config, new: Config, actions: List[Action], *, dry_run: bool, v
     """
     printed = False
     for action in actions:
-        if action.status == UNCHANGED and not verbose:
+        if (action.status == UNCHANGED or action.quiet) and not verbose:
             continue
         print_action(action, dry_run=dry_run)
         printed = True

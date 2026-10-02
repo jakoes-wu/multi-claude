@@ -20,13 +20,15 @@ LOG_PREFIX = "[multi-claude]"
 
 class Action(object):
     def __init__(self, status: str, kind: str, path: str, reason: str = "",
-                 run: Optional[Callable[[], None]] = None) -> None:
+                 run: Optional[Callable[[], None]] = None, quiet: bool = False) -> None:
         self.status = status
         # 对象类型：config、account-dir、launcher、shared-link、backup 等
         self.kind = kind
         self.path = path
         self.reason = reason
         self.run = run
+        # 不改变任何东西、又会在每条命令里重复出现的提示（如共享目录里缺某一项）：默认不打印，--verbose 时打印。
+        self.quiet = quiet
 
     @property
     def changes(self) -> bool:

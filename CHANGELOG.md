@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `set NAME ...`: change an existing account (proxy, sharing, shared-item
+  opt-outs); unlike `add` it never creates one.
+- `--shared` uses `~/.claude-shared` when no shared directory is set, and
+  `--shared DIR` makes DIR the shared directory for every account. A note
+  says when the shared directory has none of the shared items yet.
 - `login NAME [ARG ...]`: sign in to an account by running `claude auth login`
   with its environment; an e-mail-like account name is passed as `--email`.
 - Running `multi-claude` without arguments prints a short guide (no
@@ -18,7 +23,8 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 
 - Write commands print only the items that change, or `nothing to change`;
-  `--verbose` lists everything as before.
+  `--verbose` lists everything as before, including shared items that are
+  missing from the shared directory.
 - A proxy value that is neither a port nor a URL gets an error that shows
   the accepted forms.
 - README: the quick start begins with `add` and `login`; migrating
