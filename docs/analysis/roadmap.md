@@ -63,9 +63,9 @@
 
 | 项 | 实现 | 设计文档 | 发布 |
 | ---- | ---- | ---- | ---- |
-| 以账号身份运行 | `run [NAME] [-- COMMAND ...]`、`path NAME` | `feature-everyday-commands.md` | 待发布 |
-| 撤销迁移 | `restore NAME`：按实际状态续跑，登录不变 | 同上 | 待发布 |
-| 两处便利 | `migrate-default` 名称可省（取登录邮箱）；`add --config-from` 复制 `settings.json` | 同上 | 待发布 |
+| 以账号身份运行 | `run [NAME] [-- COMMAND ...]`、`path NAME` | `feature-everyday-commands.md` | v0.5.0（PR #26） |
+| 撤销迁移 | `restore NAME`：按实际状态续跑，登录不变 | 同上 | v0.5.0（PR #26） |
+| 两处便利 | `migrate-default` 名称可省（取登录邮箱）；`add --config-from` 复制 `settings.json` | 同上 | v0.5.0（PR #26） |
 
 ## 3. 待定（未排期）
 
