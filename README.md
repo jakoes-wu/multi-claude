@@ -57,17 +57,14 @@ Run `./install.sh --help` for all options.
 ## Quick start
 
 ```sh
-# Turn the existing ~/.claude into an account named "main" (run from a plain terminal, see below)
-multi-claude migrate-default main
+multi-claude add work --proxy 7901   # an account "work" with its own launcher, through a local proxy on port 7901
+multi-claude login work              # sign in to it
+claude-work                          # start Claude Code with that account
 
-# Add a second account that goes through a local proxy on port 7901
-multi-claude add work --proxy 7901
-
-# Start it and log in once with /login
-claude-work
-
-multi-claude list
+multi-claude                         # show your accounts
 ```
+
+Your existing `~/.claude` is not touched and keeps working as plain `claude`. To manage it as an account too, see [Migrating `~/.claude`](#migrating-claude) (optional; run it from a plain terminal with all Claude sessions closed).
 
 ## Commands
 
@@ -87,12 +84,13 @@ multi-claude list
 | `multi-claude route DIR NAME`, `route DIR --remove`, `route --default NAME`, `route --no-default` | Choose an account by directory for `claude-auto`. |
 | `multi-claude which [DIR]` | Show which account `claude-auto` would use in `DIR` (default: the current directory). |
 | `multi-claude rename OLD NEW` | Rename an account and its launcher. The directory and the login stay. |
+| `multi-claude login NAME [ARG ...]` | Sign in to that account (runs `claude auth login ARG ...` as it; an e-mail-like name is pre-filled with `--email`). |
 | `multi-claude mcp NAME [ARG ...]` | Run `claude mcp ARG ...` as that account. |
 | `multi-claude handoff TARGET [--from NAME] [--session ID] [--force]` | Copy a session to another account and print the command that resumes it there. |
 | `multi-claude statusline install\|uninstall FILE` | Wrap the statusLine command in a settings file so that `usage` gets fresh numbers, or restore it. |
 | `multi-claude completion bash\|zsh\|fish` | Print a shell completion script. |
 
-Every write command accepts `--dry-run`. `env`, `args`, `proxy` and `usage NAME` return 1 for an account that is not registered.
+Every write command accepts `--dry-run`, and prints only what changes; add `--verbose` to also list items that are already up to date. Run `multi-claude` without arguments for a short guide or your account list. `env`, `args`, `proxy` and `usage NAME` return 1 for an account that is not registered.
 
 ### Default locations
 

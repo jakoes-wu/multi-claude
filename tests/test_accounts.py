@@ -477,7 +477,7 @@ class SharedTest(CliTestCase):
         self.ok("add", "work")
         account = os.path.join(self.root, "work")
         os.symlink(os.path.join(self.shared, "skills"), os.path.join(account, "skills"))
-        result = self.ok("add", "work", "--shared")
+        result = self.ok("add", "work", "--shared", "--verbose")
         self.assertIn("unchanged shared-link {}".format(os.path.join(account, "skills")), result.out)
         self.assertEqual(self.managed_links("work"), ["CLAUDE.md"])
         self.ok("add", "work", "--no-shared")

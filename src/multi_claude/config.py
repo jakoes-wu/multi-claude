@@ -451,6 +451,10 @@ def normalize_proxy(value: object) -> str:
         port = int(value)
         _check_port(port)
         return "http://127.0.0.1:{}".format(port)
+    if "://" not in value:
+        # 例如 `7891x`、`127.0.0.1:7890`：urlsplit 会得到空的或错误的 scheme，原报错让人看不出该怎么写。
+        raise ValueError("proxy must be a port (e.g. 7890), an http(s) URL (e.g. http://127.0.0.1:7890), "
+                         "off or inherit; got {!r}".format(value))
     parts = urllib.parse.urlsplit(value)
     if parts.scheme in ("socks5", "socks5h", "socks4", "socks4a", "socks"):
         raise ValueError("SOCKS proxies are not supported by Claude Code "
