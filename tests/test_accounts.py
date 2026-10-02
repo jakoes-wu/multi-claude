@@ -120,7 +120,7 @@ class LauncherTest(CliTestCase):
         self.assertEqual(code, 1)
         self.assertEqual(args, [])
         self.assertIn("account directory does not exist", stderr)
-        self.assertIn("missing-dir", self.ok("list").out)
+        self.assertIn("missing-dir", self.ok("list", "--verbose").out)
 
     def test_missing_dir_message_keeps_backslash(self):
         root = os.path.join(self.tmp, "back\\slash")
@@ -187,11 +187,11 @@ class AuthOverrideTest(CliTestCase):
         with open(path) as handle:
             old = "".join(line for line in handle.read().splitlines(True) if not line.startswith("unset ANTHROPIC_"))
         self.write(path, old, 0o755)
-        self.assertRegex(self.ok("list").out, r"work\s+dir\s+ok\s+inherit\s+no\s+stale")
+        self.assertRegex(self.ok("list", "--verbose").out, r"work\s+dir\s+ok\s+inherit\s+no\s+stale")
         result = self.ok("apply")
         self.assertIn("update launcher", result.out)
         self.assertNotIn("login-bound", result.err)
-        self.assertRegex(self.ok("list").out, r"work\s+dir\s+ok\s+inherit\s+no\s+ok")
+        self.assertRegex(self.ok("list", "--verbose").out, r"work\s+dir\s+ok\s+inherit\s+no\s+ok")
 
     def test_warning_text(self):
         self.ok("add", "work")
@@ -367,13 +367,13 @@ class ListTest(CliTestCase):
     def test_login_column(self):
         self.ok("add", "work")
         self.write(os.path.join(self.root, "work", ".credentials.json"), "{}", 0o600)
-        self.assertRegex(self.ok("list").out, r"work\s+dir\s+ok\s+inherit\s+no\s+ok\s+file")
+        self.assertRegex(self.ok("list", "--verbose").out, r"work\s+dir\s+ok\s+inherit\s+no\s+ok\s+file")
 
     @unittest.skipUnless(sys.platform == "darwin", "the keychain exists only on macOS")
     def test_keychain_login_column(self):
         self.ok("add", "work")
-        self.assertRegex(self.ok("list", env={"FAKE_SECURITY_RC": "0"}).out, r"work .* keychain")
-        self.assertRegex(self.ok("list", env={"FAKE_SECURITY_RC": "1"}).out, r"work .* unknown")
+        self.assertRegex(self.ok("list", "--verbose", env={"FAKE_SECURITY_RC": "0"}).out, r"work .* keychain")
+        self.assertRegex(self.ok("list", "--verbose", env={"FAKE_SECURITY_RC": "1"}).out, r"work .* unknown")
 
     def test_add_existing_dir_without_login_warns(self):
         os.makedirs(os.path.join(self.root, "old"))
@@ -589,7 +589,7 @@ class AdoptExistingTest(CliTestCase):
         self.ok("add", "a@gmail.com", "--proxy", "7901")
         self.ok("add", "b@outlook.com")
         self.assertEqual(before, self.snapshot(self.root))
-        listing = self.ok("list").out
+        listing = self.ok("list", "--verbose").out
         self.assertNotIn(".claude ", listing)
         self.ok("add", "a@gmail.com", "--shared")
         before = self.snapshot(self.root)

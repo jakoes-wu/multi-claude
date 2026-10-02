@@ -66,41 +66,9 @@ multi-claude                         # 查看你的账号
 
 已有的 `~/.claude` 不会被改动，直接运行 `claude` 照常使用它。想把它也作为账号管理，见[迁移 `~/.claude`](#迁移-claude)（可选；需在关闭所有 Claude 会话后、在普通终端里运行）。
 
-## 命令
+## 常见操作
 
-| 命令 | 作用 |
-| ---- | ---- |
-| `multi-claude init [--root DIR] [--bin-dir DIR] [--shared-dir DIR] [--shared-items A,B]` | 创建或修改全局设置 |
-| `multi-claude migrate-default 名称 [--copy] [--keep-backup] [--proxy P] [--skip-process-check]` | 把 `~/.claude` 变成一个账号 |
-| `multi-claude add 名称 [--proxy P] [--shared \| --no-shared] [--adopt] [--shared-exclude 项] [--shared-include 项]` | 新增账号、登记已有目录或修改其选项；`--shared-exclude` 让这个账号不共享某一项，`--shared-include` 撤销 |
-| `multi-claude proxy 名称 端口\|URL\|off\|inherit` | 设置账号代理 |
-| `multi-claude env (名称 \| --defaults) [K=V ...] [--unset K ...]` | 设置或删除额外环境变量 |
-| `multi-claude args (名称 \| --defaults) -- [参数 ...]` | 整体替换固定参数；`--` 后面为空表示清空 |
-| `multi-claude remove 名称` | 注销账号并删除其启动命令。**账号目录和登录都会保留** |
-| `multi-claude apply [-f 文件]` | 按配置（或 `文件`）收敛全部账号 |
-| `multi-claude list [--verbose \| --json \| --names]` | 列出账号、启动命令和登录状态；`--json` 额外包含用量，供脚本使用；`--names` 只输出名称 |
-| `multi-claude usage [名称] [--json]` | 显示各账号最近一次已知的 5 小时 / 7 天用量 |
-| `multi-claude doctor [--json] [--verbose]` | 检查配置、启动命令、账号目录、共享软链、登录与环境变量 |
-| `multi-claude route 目录 名称`、`route 目录 --remove`、`route --default 名称`、`route --no-default` | 为 `claude-auto` 设置按目录选账号的规则 |
-| `multi-claude which [目录]` | 显示 `claude-auto` 在该目录（默认当前目录）会用哪个账号 |
-| `multi-claude rename 旧名 新名` | 给账号及其启动命令改名，目录与登录不变 |
-| `multi-claude login 名称 [参数 ...]` | 登录该账号（以它的身份运行 `claude auth login 参数 ...`；账号名形如邮箱时会用 `--email` 预填） |
-| `multi-claude mcp 名称 [参数 ...]` | 以该账号的身份运行 `claude mcp 参数 ...` |
-| `multi-claude handoff 目标 [--from 名称] [--session ID] [--force]` | 把一条会话复制到另一个账号，并打印在那边续聊的命令 |
-| `multi-claude statusline install\|uninstall 文件` | 包装设置文件里的 statusLine 命令，让 `usage` 拿到更新的数值；或还原它 |
-| `multi-claude completion bash\|zsh\|fish` | 输出 shell 补全脚本 |
-
-所有写命令都支持 `--dry-run`，并且只输出有变化的项；加 `--verbose` 会同时列出已是最新的项。不带参数运行 `multi-claude` 会显示上手说明或账号列表。`env`、`args`、`proxy` 和 `usage 名称` 对未登记的账号返回 1。
-
-### 默认位置
-
-| 项目 | 默认值 |
-| ---- | ---- |
-| 账号目录 | `~/.cc/<名称>` |
-| 启动命令 | `~/.local/bin/claude-<名称>` |
-| 配置文件 | `~/.config/multi-claude/config.json`（设置了 `XDG_CONFIG_HOME` 时以它为准） |
-
-账号名可以包含字母、数字和 `._@+-`，必须以字母或数字开头，不区分大小写（`Work` 与 `work` 是同一个账号），可以直接用邮箱。根目录下以 `.` 开头的条目不会被当成账号。
+下面各节彼此独立，按需查看。完整选项见[命令参考](#命令)。
 
 ### 代理取值
 
@@ -135,6 +103,46 @@ multi-claude env work MAX_THINKING_TOKENS=8000 --unset OLD_VAR
 - `args` 必须显式写 `--`。`--allowedTools`、`--add-dir` 这类取多个值的选项会吞掉后面所有不以 `-` 开头的参数；如果它是固定参数里的最后一个选项，运行启动命令时传入的提示词会被它吞掉，multi-claude 会告警。请在它后面再放一个选项（如上例的 `--settings`）。
 - 启动命令一律清除 `ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`CLAUDE_CODE_OAUTH_TOKEN`、`CLAUDE_CODE_OAUTH_REFRESH_TOKEN`：这些变量在 shell 里导出后，会让所有账号改用同一份凭据、绕过各自的登录。直接运行 `claude` 不受影响。
 
+### 共享资源
+
+```sh
+multi-claude init --shared-dir ~/.claude-shared
+multi-claude add work --shared
+```
+
+默认条目为 `agents`、`commands`、`skills`、`CLAUDE.md`，只链接 `shared.items` 中列出的条目。multi-claude 只创建缺少的软链，并记住哪些是它建的。关闭共享时只删除这些软链，你自己建的软链保持不动。软链位置上已有真实文件或目录时判为冲突，绝不覆盖。
+
+如果之前已经手工把账号链接到了共享目录，`multi-claude add 名称 --shared --adopt` 会接管这些软链，不重建。
+
+想让某个账号单独不共享某一项（例如用它自己的 `skills`）：
+
+```sh
+multi-claude add work --shared-exclude skills    # 删除 multi-claude 建立的 skills 软链
+multi-claude add work --shared-include skills    # 重新链接
+```
+
+其它项照常共享，共享目录不受影响；你自己在那个位置放的目录或软链不会被动。`list` 显示 `yes (not: skills)`。用 `apply -f` 时，文件里没写 `shared_exclude` 的账号会恢复共享全部项。
+
+保存账号自身状态的条目不能共享：`.credentials.json`、`.claude.json`、`settings.local.json`、`projects`、`history.jsonl`、`file-history`、`sessions`、`session-env`、`shell-snapshots`、`todos`（不区分大小写）。`shared.items` 里出现其中任何一项，配置都会被拒绝。
+
+**`skills/synced/`。** Claude Code 把从 claude.ai 同步来的技能存放在 `skills/synced/` 下，按组织和账号分桶。账号的 `skills` 是真实目录时，开启共享判为冲突，multi-claude 不移动任何内容。你可以自己把该账号的 `skills/synced/<桶>` 移进共享目录的 `skills/synced/`：不同账号的桶名不同，不会互相覆盖；但此后这个账号同步下来的技能也会写进共享目录。
+
+### 按目录选账号
+
+```sh
+multi-claude route ~/work work           # ~/work 下的任何目录都用 claude-work
+multi-claude route ~/work/client-a ca    # 多条规则命中时取最长的目录
+multi-claude route --default main        # 可选：没有规则命中时使用
+claude-auto                              # 用当前目录对应的账号启动 Claude Code
+multi-claude which                       # 只显示会选哪个账号，不启动
+```
+
+规则存在 `config.json` 里，并生成 `~/.local/bin/claude-auto`。比较的是物理路径（软链会被解析），所以 `~/work` 不会匹配 `~/workshop`；规则目录不存在时该规则被忽略。没有规则命中、也没设默认账号时，`claude-auto` 直接运行 `claude`。参数原样传递：`claude-auto -p "hello"`。
+
+由于 `claude-auto` 本身是一个启动命令名，有规则时不能有名为 `auto` 的账号；账号仍被规则引用时也不能删除（都判为冲突，退出码 3）。`claude-auto` 不改动你的 shell 配置；想让裸 `claude` 也按规则选账号，可以自己加 `alias claude=claude-auto`。
+
+降级到不支持路由的版本时，配置仍能读取，但下一次写命令会丢掉 `routes`，`claude-auto` 也会留在原处；降级前请先删除规则（或手工删除 `claude-auto`）。
+
 ### 用量
 
 ```sh
@@ -161,34 +169,6 @@ multi-claude statusline install ~/.claude/settings.json
 - 多个设置文件都定义了 `statusLine` 时，包装生效的那份（例如启动命令固定参数里用 `--settings` 传入的文件）。
 - 卸载 multi-claude 前先运行 `multi-claude statusline uninstall 文件`，否则包装命令找不到可执行文件，状态栏会变空。multi-claude 换了位置后再运行一次 `install` 即可更新路径。
 
-### 按目录选账号
-
-```sh
-multi-claude route ~/work work           # ~/work 下的任何目录都用 claude-work
-multi-claude route ~/work/client-a ca    # 多条规则命中时取最长的目录
-multi-claude route --default main        # 可选：没有规则命中时使用
-claude-auto                              # 用当前目录对应的账号启动 Claude Code
-multi-claude which                       # 只显示会选哪个账号，不启动
-```
-
-规则存在 `config.json` 里，并生成 `~/.local/bin/claude-auto`。比较的是物理路径（软链会被解析），所以 `~/work` 不会匹配 `~/workshop`；规则目录不存在时该规则被忽略。没有规则命中、也没设默认账号时，`claude-auto` 直接运行 `claude`。参数原样传递：`claude-auto -p "hello"`。
-
-由于 `claude-auto` 本身是一个启动命令名，有规则时不能有名为 `auto` 的账号；账号仍被规则引用时也不能删除（都判为冲突，退出码 3）。`claude-auto` 不改动你的 shell 配置；想让裸 `claude` 也按规则选账号，可以自己加 `alias claude=claude-auto`。
-
-降级到不支持路由的版本时，配置仍能读取，但下一次写命令会丢掉 `routes`，`claude-auto` 也会留在原处；降级前请先删除规则（或手工删除 `claude-auto`）。
-
-### 改名与管理 MCP
-
-```sh
-multi-claude rename work client-a          # claude-work 变成 claude-client-a；~/.cc/work 不变
-multi-claude mcp client-a add --scope user github -- npx -y @modelcontextprotocol/server-github
-multi-claude mcp client-a list
-```
-
-`rename` 保留账号目录，登录不受影响，路由规则会跟着改名。你自己的别名或脚本里用到旧启动命令名的，需要自行更新。存在改过名的账号时不要降级后执行写命令：旧版本会报冲突，不会改写启动命令。
-
-`mcp` 用该账号的配置目录、代理和额外环境变量运行 `claude mcp ...`，但不带它的固定参数（否则 `--allowedTools` 这类选项会把 `mcp` 子命令吞掉）。服务器配置由 Claude Code 自己写入。希望该账号所有项目都能用的服务器，请加 `--scope user`。
-
 ### 把会话交给另一个账号
 
 每个账号的会话各自存放，在一个账号里 `claude --resume` 看不到另一个账号的会话。`handoff` 把一条会话（`.jsonl` 文件以及旁边存放子代理记录和工具输出的同名目录）复制到另一个账号的同一项目目录下：
@@ -204,6 +184,18 @@ multi-claude mcp client-a list
 - 目标里已有内容不同的同一会话时，`handoff` 以退出码 3 停下；加 `--force` 会先把已有的那份改名为 `*.multi-claude-bak.*` 再复制，之前请先关掉目标账号里的这条会话。
 - 不复制 `/rewind` 用的快照（`file-history`）和项目记忆。
 
+### 改名与管理 MCP
+
+```sh
+multi-claude rename work client-a          # claude-work 变成 claude-client-a；~/.cc/work 不变
+multi-claude mcp client-a add --scope user github -- npx -y @modelcontextprotocol/server-github
+multi-claude mcp client-a list
+```
+
+`rename` 保留账号目录，登录不受影响，路由规则会跟着改名。你自己的别名或脚本里用到旧启动命令名的，需要自行更新。存在改过名的账号时不要降级后执行写命令：旧版本会报冲突，不会改写启动命令。
+
+`mcp` 用该账号的配置目录、代理和额外环境变量运行 `claude mcp ...`，但不带它的固定参数（否则 `--allowedTools` 这类选项会把 `mcp` 子命令吞掉）。服务器配置由 Claude Code 自己写入。希望该账号所有项目都能用的服务器，请加 `--scope user`。
+
 ### 诊断与补全
 
 `multi-claude doctor` 只读检查：配置与未完成的迁移；`claude` 和启动命令目录是否在 `PATH` 中；每个启动命令是否最新、有没有被同名文件遮住；账号目录是否存在、权限是否为 `0700`；默认账号的软链；断开的共享软链；是否有登录；以及 `ANTHROPIC_API_KEY` 这类会覆盖账号登录的变量。每个问题都附修复命令。有错误时退出码为 1；`--json` 输出供脚本使用。
@@ -213,34 +205,6 @@ multi-claude completion bash > ~/.local/share/bash-completion/completions/multi-
 multi-claude completion zsh > "${fpath[1]}/_multi-claude"   # 或 fpath 中任意目录
 multi-claude completion fish > ~/.config/fish/completions/multi-claude.fish
 ```
-
-### 用 `apply` 声明式配置
-
-参见 [`examples/config.example.json`](examples/config.example.json)：
-
-```json
-{
-  "version": 1,
-  "root": "~/.cc",
-  "bin_dir": "~/.local/bin",
-  "shared": {"dir": "~/.claude-shared", "items": ["agents", "commands", "skills", "CLAUDE.md"]},
-  "defaults": {"env": {}, "args": []},
-  "accounts": {
-    "main": {"identity": "default", "proxy": "inherit"},
-    "work": {"proxy": "http://127.0.0.1:7901", "shared": true}
-  }
-}
-```
-
-```sh
-multi-claude apply -f accounts.json
-# 或在新机器上一步完成：
-./install.sh --config accounts.json
-```
-
-`apply -f` 用文件内容替换整个配置。文件中没有的账号会被注销（目录保留）。只要有冲突，就什么都不写。
-
-`identity` 是工具内部状态，只能由 `migrate-default` 改变。已登记账号在文件里写的 `identity` 一律忽略。尚未登记、但写了 `"identity": "default"` 的账号会被跳过并给出提示：请在那台机器上运行 `multi-claude migrate-default <名称>`，再重新设置它的代理、环境变量、参数和共享。引用该账号的路由（含默认账号）也会一并跳过并逐条提示，之后用 `multi-claude route` 重新设置。
 
 ## 迁移 `~/.claude`
 
@@ -281,7 +245,73 @@ multi-claude remove main         # 注销账号
 
 迁移报错停下、想放弃时：报错信息会写明完整数据在哪里，把它移回 `~/.claude`，再删除 `~/.config/multi-claude/migrate-journal.json`。
 
-## 登录与账号路径
+## 参考
+
+### 命令
+
+| 命令 | 作用 |
+| ---- | ---- |
+| `multi-claude init [--root DIR] [--bin-dir DIR] [--shared-dir DIR] [--shared-items A,B]` | 创建或修改全局设置 |
+| `multi-claude migrate-default 名称 [--copy] [--keep-backup] [--proxy P] [--skip-process-check]` | 把 `~/.claude` 变成一个账号 |
+| `multi-claude add 名称 [--proxy P] [--shared \| --no-shared] [--adopt] [--shared-exclude 项] [--shared-include 项]` | 新增账号、登记已有目录或修改其选项；`--shared-exclude` 让这个账号不共享某一项，`--shared-include` 撤销 |
+| `multi-claude proxy 名称 端口\|URL\|off\|inherit` | 设置账号代理 |
+| `multi-claude env (名称 \| --defaults) [K=V ...] [--unset K ...]` | 设置或删除额外环境变量 |
+| `multi-claude args (名称 \| --defaults) -- [参数 ...]` | 整体替换固定参数；`--` 后面为空表示清空 |
+| `multi-claude remove 名称` | 注销账号并删除其启动命令。**账号目录和登录都会保留** |
+| `multi-claude apply [-f 文件]` | 按配置（或 `文件`）收敛全部账号 |
+| `multi-claude list [--verbose \| --json \| --names]` | 列出账号、启动命令和登录状态；`--json` 额外包含用量，供脚本使用；`--names` 只输出名称 |
+| `multi-claude usage [名称] [--json]` | 显示各账号最近一次已知的 5 小时 / 7 天用量 |
+| `multi-claude doctor [--json] [--verbose]` | 检查配置、启动命令、账号目录、共享软链、登录与环境变量 |
+| `multi-claude route 目录 名称`、`route 目录 --remove`、`route --default 名称`、`route --no-default` | 为 `claude-auto` 设置按目录选账号的规则 |
+| `multi-claude which [目录]` | 显示 `claude-auto` 在该目录（默认当前目录）会用哪个账号 |
+| `multi-claude rename 旧名 新名` | 给账号及其启动命令改名，目录与登录不变 |
+| `multi-claude login 名称 [参数 ...]` | 登录该账号（以它的身份运行 `claude auth login 参数 ...`；账号名形如邮箱时会用 `--email` 预填） |
+| `multi-claude mcp 名称 [参数 ...]` | 以该账号的身份运行 `claude mcp 参数 ...` |
+| `multi-claude handoff 目标 [--from 名称] [--session ID] [--force]` | 把一条会话复制到另一个账号，并打印在那边续聊的命令 |
+| `multi-claude statusline install\|uninstall 文件` | 包装设置文件里的 statusLine 命令，让 `usage` 拿到更新的数值；或还原它 |
+| `multi-claude completion bash\|zsh\|fish` | 输出 shell 补全脚本 |
+
+所有写命令都支持 `--dry-run`，并且只输出有变化的项；加 `--verbose` 会同时列出已是最新的项。不带参数运行 `multi-claude` 会显示上手说明或账号列表。`env`、`args`、`proxy` 和 `usage 名称` 对未登记的账号返回 1。
+
+### 默认位置
+
+| 项目 | 默认值 |
+| ---- | ---- |
+| 账号目录 | `~/.cc/<名称>` |
+| 启动命令 | `~/.local/bin/claude-<名称>` |
+| 配置文件 | `~/.config/multi-claude/config.json`（设置了 `XDG_CONFIG_HOME` 时以它为准） |
+
+账号名可以包含字母、数字和 `._@+-`，必须以字母或数字开头，不区分大小写（`Work` 与 `work` 是同一个账号），可以直接用邮箱。根目录下以 `.` 开头的条目不会被当成账号。
+
+### 用 `apply` 声明式配置
+
+参见 [`examples/config.example.json`](examples/config.example.json)：
+
+```json
+{
+  "version": 1,
+  "root": "~/.cc",
+  "bin_dir": "~/.local/bin",
+  "shared": {"dir": "~/.claude-shared", "items": ["agents", "commands", "skills", "CLAUDE.md"]},
+  "defaults": {"env": {}, "args": []},
+  "accounts": {
+    "main": {"identity": "default", "proxy": "inherit"},
+    "work": {"proxy": "http://127.0.0.1:7901", "shared": true}
+  }
+}
+```
+
+```sh
+multi-claude apply -f accounts.json
+# 或在新机器上一步完成：
+./install.sh --config accounts.json
+```
+
+`apply -f` 用文件内容替换整个配置。文件中没有的账号会被注销（目录保留）。只要有冲突，就什么都不写。
+
+`identity` 是工具内部状态，只能由 `migrate-default` 改变。已登记账号在文件里写的 `identity` 一律忽略。尚未登记、但写了 `"identity": "default"` 的账号会被跳过并给出提示：请在那台机器上运行 `multi-claude migrate-default <名称>`，再重新设置它的代理、环境变量、参数和共享。引用该账号的路由（含默认账号）也会一并跳过并逐条提示，之后用 `multi-claude route` 重新设置。
+
+### 登录与账号路径
 
 macOS 上，用 `add` 建立的账号，其登录存放在钥匙串里、名称由账号路径计算得出（`list --verbose` 可以看到）。所以 multi-claude 从不改变已登记账号的路径：
 
@@ -292,35 +322,11 @@ macOS 上，用 `add` 建立的账号，其登录存放在钥匙串里、名称�
 
 用 `add` 登记已有目录时，multi-claude 会只读地检查这个路径下是否有登录记录，没有时给出警告。如果以前用另一种路径写法（例如经过软链）登录过，请保持同一写法。
 
-### 手工搬动账号目录
+#### 手工搬动账号目录
 
 自己搬动账号目录后，它的启动命令会报“账号目录不存在”。macOS 上需要在新路径重新 `/login`。旧的钥匙串条目可以用 `security delete-generic-password -s 'Claude Code-credentials-<旧后缀>'` 删除（搬动前用 `list --verbose` 记下名称）。Linux 上登录是目录里的 `.credentials.json`，会随目录一起移动。
 
-## 共享资源
-
-```sh
-multi-claude init --shared-dir ~/.claude-shared
-multi-claude add work --shared
-```
-
-默认条目为 `agents`、`commands`、`skills`、`CLAUDE.md`，只链接 `shared.items` 中列出的条目。multi-claude 只创建缺少的软链，并记住哪些是它建的。关闭共享时只删除这些软链，你自己建的软链保持不动。软链位置上已有真实文件或目录时判为冲突，绝不覆盖。
-
-如果之前已经手工把账号链接到了共享目录，`multi-claude add 名称 --shared --adopt` 会接管这些软链，不重建。
-
-想让某个账号单独不共享某一项（例如用它自己的 `skills`）：
-
-```sh
-multi-claude add work --shared-exclude skills    # 删除 multi-claude 建立的 skills 软链
-multi-claude add work --shared-include skills    # 重新链接
-```
-
-其它项照常共享，共享目录不受影响；你自己在那个位置放的目录或软链不会被动。`list` 显示 `yes (not: skills)`。用 `apply -f` 时，文件里没写 `shared_exclude` 的账号会恢复共享全部项。
-
-保存账号自身状态的条目不能共享：`.credentials.json`、`.claude.json`、`settings.local.json`、`projects`、`history.jsonl`、`file-history`、`sessions`、`session-env`、`shell-snapshots`、`todos`（不区分大小写）。`shared.items` 里出现其中任何一项，配置都会被拒绝。
-
-**`skills/synced/`。** Claude Code 把从 claude.ai 同步来的技能存放在 `skills/synced/` 下，按组织和账号分桶。账号的 `skills` 是真实目录时，开启共享判为冲突，multi-claude 不移动任何内容。你可以自己把该账号的 `skills/synced/<桶>` 移进共享目录的 `skills/synced/`：不同账号的桶名不同，不会互相覆盖；但此后这个账号同步下来的技能也会写进共享目录。
-
-## 退出码
+### 退出码
 
 | 退出码 | 含义 |
 | ---- | ---- |

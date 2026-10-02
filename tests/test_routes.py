@@ -276,11 +276,11 @@ class LifecycleTest(RouteBase):
 
 class ListTest(RouteBase):
     def test_table_and_json(self):
-        self.assertNotIn("routes:", self.ok("list").out)
+        self.assertNotIn("routes:", self.ok("list", "--verbose").out)
         self.ok("route", self.work, "work")
         self.ok("route", "~/missing", "main")
         self.ok("route", "--default", "main")
-        out = self.ok("list").out
+        out = self.ok("list", "--verbose").out
         self.assertIn("routes:\n  {} -> work\n  ~/missing -> main\n  (default) -> main".format(self.work), out)
         routes = json.loads(self.ok("list", "--json").out)["routes"]
         self.assertEqual(routes["default"], "main")

@@ -112,4 +112,4 @@ class RenameTest(CliTestCase):
         self.assertNotIn("CLAUDE_CONFIG_DIR", env)
         self.assertEqual(os.path.realpath(os.path.join(self.home, ".claude")),
                          os.path.realpath(os.path.join(self.root, "home")))
-        self.assertRegex(self.ok("list").out, r"personal\s+default\s+ok")
+        self.assertRegex(self.ok("list", "--verbose").out, r"personal\s+default\s+ok")
