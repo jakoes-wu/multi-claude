@@ -4,6 +4,7 @@
 
 [![Release](https://img.shields.io/github/v/release/jakoes-wu/multi-claude)](https://github.com/jakoes-wu/multi-claude/releases)
 [![CI](https://github.com/jakoes-wu/multi-claude/actions/workflows/ci.yml/badge.svg)](https://github.com/jakoes-wu/multi-claude/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/multi-claude-cli)](https://pypi.org/project/multi-claude-cli/)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -69,7 +70,7 @@ The tool goes to `~/.local/share/multi-claude` and the `multi-claude` command to
 
 The `multi-claude` command runs with the `python3` found on `PATH` at install time. If that is a version-manager shim (pyenv, asdf, mise), the installer writes the interpreter behind it instead: a shim adds tens of milliseconds to every start, and with the statusline hook installed that happens on every status-line redraw. Run the installer again after removing that Python version.
 
-Alternatively: `pipx install git+https://github.com/jakoes-wu/multi-claude`.
+Alternatively, from PyPI: `pipx install multi-claude-cli` (upgrade with `pipx upgrade multi-claude-cli`). The command is still `multi-claude`. Use either pipx or the installer, not both: they put the same command in `~/.local/bin`.
 
 **Verified downloads.** From v0.4.0 on, every release publishes `multi-claude-<tag>.tar.gz` and `SHA256SUMS`. The remote installer downloads that archive and checks its SHA-256 before installing anything; a mismatch stops the installation. Branches and older releases are installed unverified (the installer says so); set `MULTI_CLAUDE_REQUIRE_CHECKSUM=1` to refuse them. The checksum is published next to the archive, so it protects against a damaged or altered download, not against a compromised GitHub account.
 
@@ -295,7 +296,7 @@ If a migration stops with an error and you want to abandon it: the error message
 
 ### How do I upgrade multi-claude?
 
-Run the installer again: `curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install.sh | sh`, or `./install.sh` from an updated clone. It replaces only the tool; your configuration, accounts and launchers stay. When a release changes what launchers contain, `multi-claude doctor` reports them as stale and `multi-claude apply` rewrites them.
+With pipx, run `pipx upgrade multi-claude-cli`. Otherwise run the installer again: `curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install.sh | sh`, or `./install.sh` from an updated clone. It replaces only the tool; your configuration, accounts and launchers stay. When a release changes what launchers contain, `multi-claude doctor` reports them as stale and `multi-claude apply` rewrites them.
 
 ### Which account does plain `claude` use?
 

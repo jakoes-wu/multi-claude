@@ -4,6 +4,7 @@
 
 [![Release](https://img.shields.io/github/v/release/jakoes-wu/multi-claude)](https://github.com/jakoes-wu/multi-claude/releases)
 [![CI](https://github.com/jakoes-wu/multi-claude/actions/workflows/ci.yml/badge.svg)](https://github.com/jakoes-wu/multi-claude/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/multi-claude-cli)](https://pypi.org/project/multi-claude-cli/)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -69,7 +70,7 @@ curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install
 
 `multi-claude` 命令用安装时 `PATH` 上找到的 `python3` 运行。若它是版本管理器的 shim（pyenv、asdf、mise），安装脚本会改写成它背后的真实解释器：shim 每次启动要多花几十毫秒，装了状态栏钩子后每次刷新状态栏都要启动一次。以后卸载了这个 Python 版本，请重新运行安装脚本。
 
-也可以用 `pipx install git+https://github.com/jakoes-wu/multi-claude` 安装。
+也可以从 PyPI 安装：`pipx install multi-claude-cli`（升级用 `pipx upgrade multi-claude-cli`），命令仍是 `multi-claude`。pipx 和安装脚本二选一，不要同时用：两者都把同一个命令放进 `~/.local/bin`。
 
 **下载校验**：从 v0.4.0 起，每个 release 都附带 `multi-claude-<tag>.tar.gz` 和 `SHA256SUMS`。远程安装会下载这个包，先校验 SHA-256，不一致就停止安装。安装分支或更早的版本时没有校验，安装脚本会明确提示；设置 `MULTI_CLAUDE_REQUIRE_CHECKSUM=1` 可以拒绝这种安装。校验和与安装包放在同一个 release 里，只能发现下载过程中的损坏或篡改，不能防范 GitHub 账号本身被攻破。
 
@@ -295,7 +296,7 @@ multi-claude remove main         # 注销账号
 
 ### 怎么升级 multi-claude？
 
-重新运行安装脚本：`curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install.sh | sh`，或在更新后的克隆目录里运行 `./install.sh`。它只替换工具本身，配置、账号和启动命令都保留。新版本改变了启动命令的内容时，`multi-claude doctor` 会报告启动命令已过期，运行 `multi-claude apply` 即可重写。
+用 pipx 安装的，运行 `pipx upgrade multi-claude-cli`；否则重新运行安装脚本：`curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install.sh | sh`，或在更新后的克隆目录里运行 `./install.sh`。它只替换工具本身，配置、账号和启动命令都保留。新版本改变了启动命令的内容时，`multi-claude doctor` 会报告启动命令已过期，运行 `multi-claude apply` 即可重写。
 
 ### 直接运行 `claude` 用的是哪个账号？
 
