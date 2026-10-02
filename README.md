@@ -48,6 +48,8 @@ curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install
 
 The tool goes to `~/.local/share/multi-claude` and the `multi-claude` command to `~/.local/bin`. Use `--prefix DIR` to install somewhere else. Make sure `~/.local/bin` is on your `PATH`; the installer only prints a hint and never edits your shell profile.
 
+The `multi-claude` command runs with the `python3` found on `PATH` at install time. If that is a version-manager shim (pyenv, asdf, mise), the installer writes the interpreter behind it instead: a shim adds tens of milliseconds to every start, and with the statusline hook installed that happens on every status-line redraw. Run the installer again after removing that Python version.
+
 Alternatively: `pipx install git+https://github.com/jakoes-wu/multi-claude`.
 
 Run `./install.sh --help` for all options.

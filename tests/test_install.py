@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tarfile
 import unittest
 
@@ -47,6 +48,21 @@ class InstallTest(CliTestCase):
         second = self.install()
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertEqual(second.stdout.count("unchanged"), 2, second.stdout)
+        self.assertEqual(self.tool("--version").returncode, 0)
+
+    def test_version_manager_shim_is_resolved(self):
+        """方案 feature-hook-latency §5.1.4：python3 是 shim 时，启动命令写它背后的真实解释器。"""
+        shims = os.path.join(self.tmp, "pyenv", "shims")
+        self.write(os.path.join(shims, "python3"), '#!/bin/sh\nexec "{}" "$@"\n'.format(sys.executable), 0o755)
+        real = subprocess.run([sys.executable, "-c", "import sys; print(sys.executable)"],
+                              stdout=subprocess.PIPE, universal_newlines=True).stdout.strip()
+        result = self.install(env={"PATH": shims + os.pathsep + self.env["PATH"]})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("instead of the shim", result.stdout)
+        with open(os.path.join(self.prefix, "bin", "multi-claude")) as handle:
+            wrapper = handle.read()
+        self.assertIn("exec '{}' -m multi_claude".format(real), wrapper)
+        self.assertNotIn("/shims/", wrapper)
         self.assertEqual(self.tool("--version").returncode, 0)
 
     def test_remote_install_from_tarball(self):

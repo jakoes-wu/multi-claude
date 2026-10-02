@@ -14,8 +14,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
-from . import (__version__, accounts, completion, doctor, identity, migrate, platform, routes, sessions, statusline,
-               usage)
+from . import (__version__, accounts, completion, doctor, hook, identity, migrate, platform, routes, sessions,
+               statusline, usage)
 from .actions import error, info, warn
 from .config import (DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError, RouteRule,
                      is_unshareable, load_config, normalize_proxy, parse_config, validate_env_key, validate_name,
@@ -210,12 +210,12 @@ def _split_args_command(argv: List[str]) -> Tuple[List[str], Optional[List[str]]
 
 def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv[:1] == [statusline.HOOK_COMMAND]:
+    if argv[:1] == [hook.HOOK_COMMAND]:
         # 状态栏每次刷新都会执行钩子：跳过参数解析、平台检查与迁移记录读取，尽快把进程交给原命令。
         if len(argv) != 2:
-            error("usage: multi-claude {} COMMAND".format(statusline.HOOK_COMMAND))
+            error("usage: multi-claude {} COMMAND".format(hook.HOOK_COMMAND))
             return accounts.EXIT_USAGE
-        return statusline.run_hook(argv[1])
+        return hook.main(argv[1:])
     try:
         argv, launch_args = _split_args_command(argv)
     except UsageError as exc:

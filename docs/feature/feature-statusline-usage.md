@@ -99,6 +99,8 @@
 #### 5.1.4 钩子 `multi-claude statusline-hook ORIGINAL`
 
 - **入口**：在 `main` 最开头拦截（`cli.py:185-187`，在 `_split_args_command` 与 argparse 之前）。它不是 argparse 子命令，不出现在帮助和补全里。参数个数不是 1 时退出 2。
+> 2026-10-01 更新：本节的同步采集已由 `docs/feature/feature-hook-latency.md` 改为“先 exec 原命令、采集在后台进程里进行”，入口移到 `src/multi_claude/hook.py`；下文保留 v0.2.0 的原始设计。
+
 - **步骤**：
   1. `data = sys.stdin.buffer.read()`，读到 EOF。
   2. 采集（§5.1.4.1），用 `try/except Exception` 包住：失败时静默，不向 stdout 写任何东西，因为 stdout 就是状态栏的内容。
@@ -187,7 +189,7 @@
 
 **正向**
 
-- statusLine 每次刷新多出一次 Python 启动与 `multi_claude.cli` 导入，耗时未实测，T15 时用 `time` 对比包装前后。Claude 对状态栏刷新有 300 ms 防抖，显示内容不变。
+- statusLine 每次刷新多出一次 Python 启动与 `multi_claude.cli` 导入，v0.2.0 实测（本机 claude-hud 命令）：直接执行中位数 90 ms，经钩子 213 ms；改进后见 `docs/feature/feature-hook-latency.md`（真实解释器下 91 → 122 ms）。Claude 对状态栏刷新有 300 ms 防抖，显示内容不变。
 - 采集写盘受 60 秒节流约束：同一账号每分钟最多写一次约 400 字节的文件，读 `.claude.json` 也只在要写盘时发生。
 - 钩子的采集失败被吞掉，exec 之后的一切都与原命令相同。只有 `/bin/sh` 无法执行时状态栏为空，这种情况下原命令本来也跑不起来。
 

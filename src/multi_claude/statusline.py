@@ -2,8 +2,8 @@
 
 `statusline install FILE` 把设置文件里已有的 statusLine 命令包成
 `<multi-claude 路径> statusline-hook <原命令>`。Claude Code 刷新状态栏时用 `/bin/sh -c` 执行它，
-并把一段 JSON 写进 stdin；钩子从中取出 `rate_limits` 存成该账号的用量快照，
-然后用 exec 把进程交给 `/bin/sh -c <原命令>`，状态栏的输出、退出码与不包装时完全相同。
+并把一段 JSON 写进 stdin。钩子入口在 hook.py：它把 stdin 交给后台进程里的 capture，
+自己用 exec 把进程交给 `/bin/sh -c <原命令>`，状态栏的输出、退出码与不包装时完全相同。
 
 钩子靠环境里的 `CLAUDE_CONFIG_DIR` 认账号（default 身份不设它），不读凭据、不联网。
 钩子的 stdout 就是状态栏内容，所以采集过程中不得向 stdout 输出任何东西，采集失败也只能静默。
@@ -14,19 +14,16 @@ import os
 import shlex
 import shutil
 import stat
-import sys
-import tempfile
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Mapping, NamedTuple, Optional, Tuple
 
 from . import accounts, usage
 from .config import Account, Config, load_config
 from .fsutil import atomic_write
+from .hook import HOOK_COMMAND
 
-HOOK_COMMAND = "statusline-hook"
 EXECUTABLE = "multi-claude"
-SHELL = "/bin/sh"
 # 同一账号的状态栏约 300 ms 刷新一次；数值没变时一分钟内只落盘一次。
 THROTTLE = timedelta(seconds=60)
 
@@ -132,33 +129,6 @@ def _backup_path(target: str) -> str:
         candidate = "{}.{}".format(base, index)
         index += 1
     return candidate
-
-
-def run_hook(original: str) -> int:
-    """statusLine 钩子：采集用量后把进程交给 `/bin/sh -c <原命令>`。
-
-    采集失败不影响显示。成功时本函数不返回（exec）；只有准备 stdin 或 exec 本身失败时返回 127，
-    这时状态栏为空，原因写到 stderr（Claude 只把它记进调试日志）。
-    """
-    data = sys.stdin.buffer.read()
-    try:
-        capture(data, os.environ, datetime.now(timezone.utc))
-    except Exception:  # noqa: BLE001 — 采集是旁路，任何异常都不能影响状态栏
-        pass
-    try:
-        # stdin 已被读完，原命令需要同样的输入：放进一个已 unlink 的临时文件再接到 fd 0。
-        # 用 exec 而不是子进程，原命令的输出、退出码与收到的信号才与 Claude 直接执行时一致。
-        replay = tempfile.TemporaryFile()
-        replay.write(data)
-        replay.flush()
-        replay.seek(0)
-        os.dup2(replay.fileno(), 0)
-        sys.stdout.flush()
-        sys.stderr.flush()
-        os.execv(SHELL, [SHELL, "-c", original])
-    except OSError as exc:
-        sys.stderr.write("multi-claude {}: cannot run {}: {}\n".format(HOOK_COMMAND, SHELL, exc))
-    return 127
 
 
 def capture(data: bytes, environ: Mapping[str, str], now: datetime) -> None:

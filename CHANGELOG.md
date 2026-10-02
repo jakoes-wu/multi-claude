@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The statusline hook starts the original status-line command right after
+  reading its input and records usage in a detached background process, so
+  the status line no longer waits for the capture. The hook path loads only a
+  small module before handing over. Measured overhead compared with running
+  the status-line command directly: about 30 ms, down from about 120 ms.
+- `install.sh` writes the interpreter behind a pyenv, asdf or mise shim into
+  the launcher instead of the shim itself. Run the installer again to pick
+  this up.
+
 ## [0.2.0] - 2026-10-01
 
 ### Added
