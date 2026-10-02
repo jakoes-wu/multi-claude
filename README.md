@@ -10,6 +10,8 @@
 
 Use several [Claude Code](https://code.claude.com/docs) accounts on one machine, at the same time. Each account keeps its own login, settings and history and, if you like, its own proxy. No more logging out and in again.
 
+It never reads your login, never connects to the network and never edits your shell startup files.
+
 ```sh
 claude-work        # Claude Code with your work account
 claude-personal    # Claude Code with your personal account, in another terminal
@@ -35,6 +37,10 @@ The launchers are plain shell scripts. They keep working even if you uninstall m
 
 ## Features
 
+- **Never reads your login** — the only keychain call checks whether an item exists; the contents of keychain items and `.credentials.json` are never opened. `migrate-default` and `restore` move whole account directories, and on Linux the credentials file moves with its directory without being opened.
+- **No network** — multi-claude itself makes no network connections: no telemetry, no usage reporting, no update checks. Only the installer, pipx or Homebrew download the package.
+- **Leaves your shell alone** — when `PATH` needs a change, it prints the line to add instead of editing `~/.zshrc` or `~/.bashrc`.
+- **Changes only what you ask** — it writes its own configuration and state, the launchers, account directories (including the VS Code data that `code` keeps in `<root>/.apps`) and shared links. A Claude Code settings file is changed only by `statusline install` (the file you name, with a backup) and `add --config-from` (the new account's `settings.json`).
 - **Migrate the default account** — move your existing `~/.claude` into the account root without logging out. `claude` keeps working exactly as before.
 - **Add accounts** — create an account directory and a `claude-<name>` launcher, or adopt a directory you already have.
 - **Per-account proxy** — a local port, an HTTP(S) proxy URL, `off`, or `inherit`.
@@ -42,7 +48,6 @@ The launchers are plain shell scripts. They keep working even if you uninstall m
 - **One-step deployment** — `install.sh --config accounts.json` installs the tool and creates every account in the file.
 - **Idempotent** — every command can be re-run safely. Write commands print only what changes (`--verbose` lists everything); conflicts with files multi-claude does not own are reported without changing anything; an interrupted migration resumes where it stopped.
 - **Optional shared resources** — link `CLAUDE.md`, `skills`, `agents` and `commands` from one shared directory into selected accounts.
-- **Hands off your credentials** — multi-claude never reads, copies or deletes logins. Its only keychain call checks whether an item exists.
 
 ## Requirements
 
@@ -352,7 +357,7 @@ By default the numbers come from the cache that Claude Code writes in `.claude.j
 
 ### Does multi-claude read or copy my login?
 
-No. It never reads, copies or deletes credentials; its only keychain call checks whether an item exists. On macOS a login is tied to the account directory's path, which is why `rename` keeps the directory.
+It never reads it: its only keychain call checks whether an item exists, and it never opens `.credentials.json`. It does not export, upload or back up logins. `migrate-default` and `restore` move a whole account directory; on Linux the credentials file is inside it and moves with it (in copy mode it is copied as part of the directory, verified, and the original directory is then removed unless you pass `--keep-backup`), still without being opened. On macOS a login is tied to the account directory's path, which is why `rename` keeps the directory.
 
 ## Reference
 

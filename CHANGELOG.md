@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- README: the privacy properties (never reads logins, no network, no shell
+  edits, changes only what you ask) are listed first. The FAQ no longer says
+  that credentials are never copied: `migrate-default` in copy mode copies
+  the account directory, which on Linux contains the credentials file.
 - README FAQ: why there is no command that switches the account of plain
   `claude`, and what to use instead.
 
