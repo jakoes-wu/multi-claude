@@ -59,7 +59,17 @@
 | 第三批 | `set` 命令；`--shared [DIR]` 与默认 `~/.claude-shared`；空共享目录提示 | `feature-set-command.md` | v0.3.0（PR #17） |
 | 小改进 | 本文档补 v0.3.0；包装状态栏后提示新开会话；账号名写在选项后面时的报错 | `feature-usability-fixes.md` | v0.3.1（PR #19） |
 
+### 2.5 常用命令（v0.5.0）
+
+| 项 | 实现 | 设计文档 | 发布 |
+| ---- | ---- | ---- | ---- |
+| 以账号身份运行 | `run [NAME] [-- COMMAND ...]`、`path NAME` | `feature-everyday-commands.md` | 待发布 |
+| 撤销迁移 | `restore NAME`：按实际状态续跑，登录不变 | 同上 | 待发布 |
+| 两处便利 | `migrate-default` 名称可省（取登录邮箱）；`add --config-from` 复制 `settings.json` | 同上 | 待发布 |
+
 ## 3. 待定（未排期）
+
+- `use NAME`（切换 `~/.claude` 指向的账号）：等用户决定。直接运行 `claude` 时钥匙串登录（macOS）、`~/.claude.json` 与 default 账号启动命令的指向检查都不跟着 `~/.claude` 走，切换后会混用两个账号的状态，见 `feature-everyday-commands.md` §6、§10。
 
 - Windows 支持（见 `feature-account-manager.md` 二期）。
 - TUI 选择器、菜单栏：可以基于 `list --json` 由外部工具实现。

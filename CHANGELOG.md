@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `run [NAME] [-- COMMAND ...]` runs any command with the environment of an
+  account's launcher (without a command: `claude` with the fixed arguments;
+  without NAME: the account `claude-auto` would use).
+- `path NAME` prints an account's directory.
+- `restore NAME` undoes `migrate-default`: it moves the account back to
+  `~/.claude` and unregisters it; the login is kept. It can be rerun after an
+  interruption.
+- `migrate-default` without a name uses the email address of the login in
+  `~/.claude.json`.
+- `add NAME --config-from OTHER` copies `settings.json` from another account
+  once.
+
 ### Changed
 
 - README: install from PyPI with `pipx install multi-claude-cli`, and a PyPI

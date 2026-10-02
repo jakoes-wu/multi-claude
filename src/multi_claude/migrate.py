@@ -298,16 +298,18 @@ def _register(config: Config, config_exists: bool, name: str, proxy: Optional[st
     return accounts.converge(config, new, config_exists=config_exists, dry_run=dry_run)
 
 
-def _busy_check(source: str) -> int:
+def _busy_check(source: str, command: str = "migrate-default") -> int:
     """占用检查第 0–5 条（方案 §5.1.7）：迁移期间不能有任何 Claude 进程。
+
+    restore 也复用这里（方案 feature-everyday-commands §5.1.4），command 只改变提示里的命令名。
 
     任何账号的 Claude 进程都会写 $HOME/.claude（依据 12）：rename 窗口内写入会重建真实的 S，
     copy 模式下复制完成到 park 之间写入的内容会随备份一起被删掉。返回 0 可以继续，
     1 检查本身失败，4 有占用。
     """
     if platform.CHILD_SESSION_ENV in os.environ:
-        error("multi-claude is running inside a Claude Code session; run migrate-default from a plain "
-              "terminal with no Claude session", phase="busy-check", path=source)
+        error("multi-claude is running inside a Claude Code session; run {} from a plain "
+              "terminal with no Claude session".format(command), phase="busy-check", path=source)
         print("  pid={} command=multi-claude usage=inside-claude-session path={}".format(os.getpid(), source),
               file=sys.stderr)
         print("  note: {} can also be inherited by screen, tmux or programs started by Claude; if you are "
@@ -348,11 +350,12 @@ def _busy_check(source: str) -> int:
     if users.stop_commands:
         print("  every Claude account writes to {} (bridge-spawn, state/, ide/), so close all Claude sessions; "
               "to stop background sessions run:".format(source), file=sys.stderr)
-        for command in users.stop_commands:
-            print("    " + command, file=sys.stderr)
+        for stop_command in users.stop_commands:
+            print("    " + stop_command, file=sys.stderr)
     if any(process.usage == "daemon-service" for process in busy):
         print("  the background service is installed and launchd/systemd may restart it at any time; run "
-              "`claude daemon uninstall` first and install it again after the migration", file=sys.stderr)
+              "`claude daemon uninstall` first and install it again after the {}".format(
+                  "migration" if command == "migrate-default" else command), file=sys.stderr)
     return accounts.EXIT_BUSY
 
 
