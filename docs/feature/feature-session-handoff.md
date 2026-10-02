@@ -1,6 +1,6 @@
 # multi-claude：会话交接 handoff
 
-> 2026-10-01 注记：plan-review 2 轮收敛，用户同意编码；代码已按方案实现（`src/multi_claude/sessions.py`、`cli.py` `cmd_handoff`），待独立代码评审与编译机验证，未提交。来源：`docs/analysis/competitor-analysis.md` §6.2 第 6 条、§7 表 `handoff` 行。基线：main `a397796`。用户决定（2026-10-01）：
+> 2026-10-01 注记：已合并（PR #8），随 v0.2.0 发布；实机验证（T14）已通过。来源：`docs/analysis/roadmap.md` §2.3。基线：main `a397796`。用户决定（2026-10-01）：
 >
 > - 复制范围：会话文件和同名目录；
 > - 来源账号：自动识别，也可用 `--from` 指定；

@@ -1,6 +1,6 @@
 # multi-claude：降低 statusLine 钩子的显示延迟
 
-> 2026-10-01 注记：plan-review 2 轮收敛，用户同意编码；代码已按方案实现（`src/multi_claude/hook.py`、`__main__.py`、`install.sh` shim 解析），本机 258 用例通过；实测（真实解释器、claude-hud 命令 15 次）直接 91 ms、经钩子 122 ms，差 31 ms，达到 ≤ 40 ms；待独立代码评审与编译机验证，未提交。来源：v0.2.0 发布后的本机实测（statusline 方案 `docs/feature/feature-statusline-usage.md` §8 T15 之前）。基线：main `e785f68`（v0.2.0）。用户决定：先优化再做 T15。
+> 2026-10-01 注记：已合并（PR #11），随 v0.2.1 发布。实测（真实解释器、claude-hud 命令 15 次）：直接 91 ms、经钩子 122 ms，差 31 ms，达到 ≤ 40 ms；安装版实测 97 → 131 ms。来源：v0.2.0 发布后的本机实测（statusline 方案 `docs/feature/feature-statusline-usage.md` §8 T15 之前）。基线：main `e785f68`（v0.2.0）。用户决定：先优化再做 T15。
 
 ## 1. 背景
 

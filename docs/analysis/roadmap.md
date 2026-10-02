@@ -1,0 +1,57 @@
+# multi-claude 升级路线
+
+> 2026-10-01：v0.2–v0.4 三组全部完成，随 v0.2.0、v0.2.1 发布。各项的设计见对应的 `docs/feature/` 文档。
+
+## 1. 原则
+
+- 不读写凭据（钥匙串条目、`.credentials.json`、OAuth 令牌）。
+- 不写 Claude Code 自己管理的文件（`.claude.json`、钥匙串）。需要改变 Claude 的行为时，优先用启动参数和环境变量。
+- 每项都保持幂等、可 `--dry-run`、可回滚。
+
+以下做法与这些原则冲突，不做：
+
+| 做法 | 理由 |
+| ---- | ---- |
+| 在同一个 `~/.claude` 里切换凭据 | 会影响所有正在运行的会话，还要和 Claude 的令牌刷新抢锁，与本项目多账号并行的模型相反 |
+| 读出、复制、导出凭据 | 违反“不读写凭据” |
+| 自行刷新 OAuth 令牌 | 会与 Claude Code 本体争抢刷新，可能导致刷新令牌轮换失效 |
+| 额度用尽时自动轮换账号 | 依赖读写凭据；用轮换账号规避用量限制违反使用政策 |
+| 伪装 Claude Code 的请求特征 | 刻意规避服务端识别 |
+| 运行远程脚本、把凭据上传到云端 | 安全风险 |
+| 安装时静默写入权限放行规则 | 改动用户的安全设置且不告知 |
+
+## 2. 路线与完成情况
+
+### 2.1 v0.2：可见性与诊断
+
+| 项 | 实现 | 设计文档 | 发布 |
+| ---- | ---- | ---- | ---- |
+| 用量 | `usage` 命令；`list --json` 带用量；只读 `.claude.json` 的用量缓存 | `feature-visibility-diagnostics.md` | v0.2.0（PR #4） |
+| 诊断 | `doctor`，只读，`--json`，有错误时退出 1 | 同上 | v0.2.0（PR #4） |
+| 补全与 JSON | `completion bash/zsh/fish`；`list --json`、`list --names` | 同上 | v0.2.0（PR #4） |
+| 清除鉴权覆盖变量 | 启动命令默认 `unset` 四个鉴权变量 | 同上 | v0.2.0（PR #4） |
+
+### 2.2 v0.3：日常便利
+
+| 项 | 实现 | 设计文档 | 发布 |
+| ---- | ---- | ---- | ---- |
+| 按目录选账号 | 路由规则 + 生成的 `claude-auto` 入口；`route`、`which`；不装 cd 钩子 | `feature-directory-routing.md` | v0.2.0（PR #5） |
+| 改名不动目录 | 账号新增 `dir` 字段；`rename` 只改账号名与启动命令名 | `feature-rename-mcp.md` | v0.2.0（PR #6） |
+| 按账号管理 MCP | `mcp NAME ...` 以该账号的身份运行 `claude mcp`，不写 `.claude.json` | 同上 | v0.2.0（PR #6） |
+
+### 2.3 v0.4：进阶
+
+| 项 | 实现 | 设计文档 | 发布 |
+| ---- | ---- | ---- | ---- |
+| 状态栏实时用量 | `statusline install/uninstall` 包装现有 statusLine；钩子记录 `rate_limits` 快照，`usage` 取较新的一份 | `feature-statusline-usage.md` | v0.2.0（PR #7） |
+| 钩子提速 | 先 exec 原命令、采集放到后台进程；安装脚本遇到版本管理器的 shim 时写入真实解释器 | `feature-hook-latency.md` | v0.2.1（PR #11） |
+| 会话交接 | `handoff TARGET`：把一条会话复制到另一个账号，打印续聊命令 | `feature-session-handoff.md` | v0.2.0（PR #8） |
+| 共享项按账号退出 | `add --shared-exclude/--shared-include`；禁止共享账号私有状态 | `feature-shared-exclude.md` | v0.2.0（PR #9） |
+
+## 3. 待定（未排期）
+
+- Windows 支持（见 `feature-account-manager.md` 二期）。
+- TUI 选择器、菜单栏：可以基于 `list --json` 由外部工具实现。
+- VS Code `processWrapper` 入口：配合 `claude-auto`，让从图形界面启动的 IDE 也能按项目选账号；需要先确认 VS Code 扩展的配置项。
+- 非凭据备份：导出 settings、skills、项目记忆。
+- 新账号预填 `.claude.json` 白名单项，跳过首次引导。
