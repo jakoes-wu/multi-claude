@@ -56,6 +56,7 @@ COMMAND_GROUPS = [
         ("handoff", "copy a session to another account"),
         ("mcp", "run `claude mcp` as an account"),
         ("run, path", "run any command as an account; print its directory"),
+        ("code", "open VS Code for an account (experimental)"),
     ]),
     ("Setup and checks", [
         ("init, apply", "global settings; converge everything to config.json"),
@@ -217,6 +218,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_path = sub.add_parser("path", description="print the directory of an account")
     p_path.add_argument("name")
 
+    # code 的 VS Code 参数与 run 一样，在 argparse 之前从第一个 `--` 处切走。
+    p_code = sub.add_parser("code", description="open a separate VS Code instance with the environment of an "
+                                                "account (experimental): code NAME [PATH] [-- CODE_ARGS ...]")
+    p_code.add_argument("name")
+    p_code.add_argument("path", nargs="?", metavar="PATH")
+
     p_restore = sub.add_parser("restore", description="undo migrate-default: move the account directory back to "
                                                       "~/.claude and unregister the account; the login is kept")
     p_restore.add_argument("name")
@@ -285,7 +292,7 @@ def _add_write_options(parser: argparse.ArgumentParser) -> None:
 def _split_args_command(argv: List[str]) -> Tuple[List[str], Optional[List[str]]]:
     """子命令是 `args` 时，把第一个 `--` 之后的全部内容取出来作为参数列表；
     子命令是 `mcp` 或 `login` 时，账号名之后的全部内容原样作为 `claude mcp` / `claude auth login` 的参数（不经 argparse）；
-    子命令是 `run` 时，第一个 `--` 之后的内容是要运行的命令。
+    子命令是 `run` / `code` 时，第一个 `--` 之后的内容是要运行的命令 / 传给 VS Code 的参数。
 
     不能用 argparse.REMAINDER：可选位置参数加 --defaults 加 REMAINDER 时，
     `args --defaults -- --settings s` 会被解析成账号名 `--settings`（方案 §5.1.2，实测 3.10/3.11/3.13）。
@@ -307,8 +314,8 @@ def _split_args_command(argv: List[str]) -> Tuple[List[str], Optional[List[str]]
             example = "multi-claude mcp NAME list" if command == "mcp" else "multi-claude login NAME"
             raise UsageError("{} needs an account name first, e.g. `{}`".format(command, example))
         return argv[:command_index + 2], rest[1:]
-    if command_index is not None and argv[command_index] == "run":
-        # run 的命令从第一个 `--` 之后原样取出；没有 `--` 与 `--` 后为空都表示“没有命令”（运行 claude）。
+    if command_index is not None and argv[command_index] in ("run", "code"):
+        # run 的命令（code 的 VS Code 参数）从第一个 `--` 之后原样取出；没有 `--` 与 `--` 后为空都表示“没有”。
         if "--" not in argv[command_index + 1:]:
             return argv, None
         separator = argv.index("--", command_index + 1)
@@ -394,7 +401,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 return accounts.EXIT_ERROR
             # 不加写锁：凭据由 Claude 自己写入，登录过程需要浏览器交互，可能持续很久。
             return cmd_login(args.name, args.launch_args or [])
-        if args.command in ("run", "path"):
+        if args.command in ("run", "path", "code"):
             if notice:
                 # 与 mcp 相同：迁移进行到一半时账号目录可能正在搬动。
                 error("finish the unfinished migration before running `{}`".format(args.command))
@@ -402,6 +409,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             # 只读配置、不加写锁：run 会把进程换成目标命令，可能运行很久。
             if args.command == "path":
                 return cmd_path(args.name)
+            if args.command == "code":
+                return cmd_code(args.name, args.path, args.launch_args or [])
             return cmd_run(args.name, args.launch_args or [])
         if args.command == "mcp":
             if notice:
@@ -831,20 +840,76 @@ def cmd_run(name: Optional[str], command: List[str]) -> int:
         # 提示写 stderr：stdout 留给目标命令，`run -- cmd | …` 才不会混进这一行。
         print("[multi-claude] run: using account {} ({})".format(
             account.name, "route " + rule.path if rule is not None else "default"), file=sys.stderr)
-    process_env, code = _usable_account_env(config, account)
-    if process_env is None:
-        return code
     if not command:
         # 固定参数按启动命令的规则展开 `~`（launcher.render），两种启动方式收到的参数才逐项相同。
         command = ["claude"] + [launcher.expand_value(arg) for arg in config.effective_args(account)]
+    return _exec_as(config, account, command)
+
+
+def _exec_as(config: Config, account: Account, command: List[str], not_found_hint: str = "") -> int:
+    """run 与 code 共用：账号可用时以它的启动命令环境 exec 目标命令，成功则不返回。
+
+    返回值只出现在失败时：账号不可用 1，PATH 中找不到命令 127。
+    """
+    process_env, code = _usable_account_env(config, account)
+    if process_env is None:
+        return code
     if shutil.which(command[0], path=process_env.get("PATH")) is None:
-        error("{} not found in PATH".format(command[0]))
+        error("{} not found in PATH{}".format(command[0], not_found_hint))
         return 127
     sys.stdout.flush()
     sys.stderr.flush()
     # exec 失败（权限、格式错误）抛 OSError，由 main 统一按退出码 1 报告。
     os.execvpe(command[0], command, process_env)
     return accounts.EXIT_ERROR  # 不会执行到这里：execvpe 成功后不返回
+
+
+# code 依赖的未公开行为由 2026-10-02 实测确认的版本（方案 feature-vscode-launch §1.1）。
+VSCODE_VERIFIED_WITH = "VS Code 1.139.1, extension 2.1.286"
+# macOS 的 unix 套接字路径上限是 104 字节，VS Code 在 macOS 上把主套接字放在用户数据目录下（形如 1.13-main.sock，
+# 约 15 字节，见 VS Code out/main.js 构造套接字路径的函数）；Linux 设了 XDG_RUNTIME_DIR 时不放在这里。
+_SOCKET_DIR_WARN_LENGTH = 80
+_CODE_NOT_FOUND_HINT = "; in VS Code run \"Shell Command: Install 'code' command in PATH\""
+
+
+def cmd_code(name: str, path: Optional[str], code_args: List[str]) -> int:
+    """以账号环境打开一个独立的 VS Code 实例（实验功能，方案 feature-vscode-launch §5.1）。
+
+    必须给每个账号单独的 --user-data-dir：VS Code 已在运行时，同一用户数据目录的请求会转给已运行的实例，
+    新窗口沿用那个实例的环境，账号就不生效了。目录按账号目录名存放，rename 后数据仍在原处。
+    """
+    warn("experimental: code relies on undocumented behaviour of VS Code and the Claude Code extension "
+         "(verified with {})".format(VSCODE_VERIFIED_WITH))
+    config, _ = load_config()
+    account = config.find(_checked_name(name))
+    if account is None:
+        error("account {!r} is not registered".format(name))
+        return accounts.EXIT_ERROR
+    # 先确认账号可用、找得到 code 命令，再建目录：任何失败都不留下空的用户数据目录。
+    process_env, code = _usable_account_env(config, account)
+    if process_env is None:
+        return code
+    if shutil.which("code", path=process_env.get("PATH")) is None:
+        error("code not found in PATH{}".format(_CODE_NOT_FOUND_HINT))
+        return 127
+    data_dir = _private_dirs(expand(config.root), [".apps", account.dir, "vscode"])
+    if sys.platform == "darwin":
+        if len(data_dir) > _SOCKET_DIR_WARN_LENGTH:
+            warn("{} is long; VS Code's socket path inside it may exceed the 104-byte limit".format(data_dir))
+        warn("on macOS, code passes the whole environment (including this account's variables) to "
+             "`open --env`, so the values are briefly visible in the process list")
+    command = ["code", "--user-data-dir", data_dir] + ([path] if path else []) + list(code_args)
+    return _exec_as(config, account, command, not_found_hint=_CODE_NOT_FOUND_HINT)
+
+
+def _private_dirs(root: str, parts: List[str]) -> str:
+    """在 root 下逐级创建 parts，每一级都只允许本人访问（makedirs 的 mode 受 umask 影响，所以再 chmod）。"""
+    path = root
+    for part in parts:
+        path = os.path.join(path, part)
+        os.makedirs(path, mode=0o700, exist_ok=True)
+        os.chmod(path, 0o700)
+    return path
 
 
 def cmd_path(name: str) -> int:

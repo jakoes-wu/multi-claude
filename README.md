@@ -259,6 +259,22 @@ multi-claude add client-b --config-from work # start client-b with a copy of wor
 
 `--config-from` copies `settings.json` once; afterwards the two files are independent. A different existing `settings.json` in the new account, or a `settings.json` that the account shares, is a conflict and nothing is changed. Use [shared resources](#shared-resources) for settings that should stay the same in every account.
 
+### Opening VS Code for an account (experimental)
+
+```sh
+multi-claude code work ~/projects/app             # a separate VS Code window for work
+multi-claude code personal . -- --disable-gpu     # arguments after -- go to VS Code
+```
+
+The Claude Code extension uses the `CLAUDE_CONFIG_DIR` of the environment VS Code was started with, so a VS Code opened from the Dock always uses `~/.claude`. `code` starts VS Code with the account's environment (the same as `run`) and a separate user data directory, `<root>/.apps/<account directory>/vscode`. A separate user data directory is required: otherwise VS Code hands the request to the instance that is already running, with its own environment. Each account's instance starts with default VS Code settings; extensions are shared because they live in `~/.vscode/extensions`.
+
+Notes:
+
+- If an instance for the account is already running, the request goes to it; changes to the proxy or environment variables apply after that instance quits.
+- Setting `CLAUDE_CONFIG_DIR` in the extension's `claudeCode.environmentVariables` inside that instance overrides the account.
+- On macOS the `code` command passes the whole environment to `open --env`, so the values are briefly visible in the process list.
+- Verified with VS Code 1.139.1 and Claude Code extension 2.1.286 on macOS; `code` prints a warning because it relies on undocumented behaviour. It needs the `code` command on `PATH` (in VS Code: "Shell Command: Install 'code' command in PATH").
+
 ### Diagnostics and completion
 
 `multi-claude doctor` checks, without changing anything: the configuration and any unfinished migration, whether `claude` and the launcher directory are on `PATH`, whether each launcher is up to date and not hidden by another file of the same name, whether each account directory exists and is private (`0700`), the default account's link, broken shared links, whether a login exists, and variables such as `ANTHROPIC_API_KEY` that override the accounts' logins. Every problem comes with the command that fixes it. It exits with 1 when there is an error; `--json` prints the results for scripts.
@@ -362,6 +378,7 @@ No. It never reads, copies or deletes credentials; its only keychain call checks
 | `multi-claude mcp NAME [ARG ...]` | Run `claude mcp ARG ...` as that account. |
 | `multi-claude run [NAME] [-- COMMAND ...]` | Run a command (default: `claude` with the fixed arguments) with the environment of the account's launcher. Without NAME, the account `claude-auto` would use. |
 | `multi-claude path NAME` | Print the account's directory. |
+| `multi-claude code NAME [PATH] [-- ARGS ...]` | Open a separate VS Code instance with the account's environment (experimental). |
 | `multi-claude handoff TARGET [--from NAME] [--session ID] [--force]` | Copy a session to another account and print the command that resumes it there. |
 | `multi-claude statusline install\|uninstall FILE` | Wrap the statusLine command in a settings file so that `usage` gets fresh numbers, or restore it. |
 | `multi-claude completion bash\|zsh\|fish` | Print a shell completion script. |
@@ -437,7 +454,7 @@ If you move an account directory yourself, its launcher reports that the directo
 ./install.sh --uninstall
 ```
 
-This removes the tool only. Your configuration, account directories, logins and `claude-<name>` launchers stay; the launchers keep working because they do not depend on multi-claude. Run `multi-claude statusline uninstall FILE` first if you wrapped a status line.
+This removes the tool only. Your configuration, account directories (including the VS Code data in `<root>/.apps` created by `code`), logins and `claude-<name>` launchers stay; the launchers keep working because they do not depend on multi-claude. Run `multi-claude statusline uninstall FILE` first if you wrapped a status line.
 
 ## Contributing
 

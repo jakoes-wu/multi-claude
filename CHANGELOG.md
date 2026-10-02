@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `code NAME [PATH] [-- ARGS ...]` (experimental) opens a separate VS Code
+  instance with the account's environment and its own user data directory
+  (`<root>/.apps/<account directory>/vscode`), so the Claude Code extension
+  uses that account.
+
 ## [0.5.0] - 2026-10-02
 
 ### Added

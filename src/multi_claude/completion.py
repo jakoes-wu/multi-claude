@@ -19,7 +19,7 @@ POSITIONAL_KINDS = {
     "args": ["name"], "remove": ["name"], "usage": ["name"], "completion": ["shell"],
     "route": ["dir", "name"], "which": ["dir"], "rename": ["name"], "mcp": ["name"],
     "statusline": ["statusline", "file"], "handoff": ["name"], "login": ["name"], "set": ["name"],
-    "run": ["name"], "path": ["name"], "restore": ["name"],
+    "run": ["name"], "path": ["name"], "restore": ["name"], "code": ["name", "file"],
 }
 # 选项值是路径、应按文件补全的选项。
 PATH_OPTIONS = ("-f", "--file", "--root", "--bin-dir", "--shared-dir")

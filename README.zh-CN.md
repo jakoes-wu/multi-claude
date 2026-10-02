@@ -259,6 +259,22 @@ multi-claude add client-b --config-from work # 新账号 client-b 复制一份 w
 
 `--config-from` 只复制一次 `settings.json`，之后两份互不影响。新账号里已有内容不同的 `settings.json`，或者这个账号共享了 `settings.json`，都算冲突，不做任何修改。希望所有账号保持一致的设置，请用[共享资源](#共享资源)。
 
+### 按账号打开 VS Code（实验功能）
+
+```sh
+multi-claude code work ~/projects/app             # 以 work 账号打开一个独立的 VS Code 窗口
+multi-claude code personal . -- --disable-gpu     # -- 之后的参数交给 VS Code
+```
+
+VS Code 里的 Claude Code 扩展只认 VS Code 启动时环境中的 `CLAUDE_CONFIG_DIR`，所以从 Dock 打开的 VS Code 总是用 `~/.claude`。`code` 以账号的环境（与 `run` 相同）和独立的用户数据目录 `<root>/.apps/<账号目录名>/vscode` 启动 VS Code。用户数据目录必须分开：否则 VS Code 会把请求转给已经在运行的实例，用的是那个实例的环境。每个账号的实例第一次打开时是 VS Code 的默认设置；扩展装在 `~/.vscode/extensions`，各实例共用。
+
+注意：
+
+- 该账号的实例已在运行时，请求会转给它；之后修改的代理或环境变量，要等它退出后才生效。
+- 在这个实例里把扩展设置 `claudeCode.environmentVariables` 中的 `CLAUDE_CONFIG_DIR` 设成别的值，会覆盖账号。
+- macOS 上 `code` 命令把整个环境交给 `open --env`，这些值会短暂出现在进程列表里。
+- 已在 macOS 上用 VS Code 1.139.1 和 Claude Code 扩展 2.1.286 验证；它依赖未公开的行为，运行时会打印提示。需要 `code` 命令在 `PATH` 上（在 VS Code 里运行 “Shell Command: Install 'code' command in PATH”）。
+
 ### 诊断与补全
 
 `multi-claude doctor` 只读检查：配置与未完成的迁移；`claude` 和启动命令目录是否在 `PATH` 中；每个启动命令是否最新、有没有被同名文件遮住；账号目录是否存在、权限是否为 `0700`；默认账号的软链；断开的共享软链；是否有登录；以及 `ANTHROPIC_API_KEY` 这类会覆盖账号登录的变量。每个问题都附修复命令。有错误时退出码为 1；`--json` 输出供脚本使用。
@@ -362,6 +378,7 @@ multi-claude remove main         # 注销账号
 | `multi-claude mcp 名称 [参数 ...]` | 以该账号的身份运行 `claude mcp 参数 ...` |
 | `multi-claude run [名称] [-- 命令 ...]` | 以启动命令的环境运行命令（默认运行带固定参数的 `claude`）；不给名称时用 `claude-auto` 会选的账号 |
 | `multi-claude path 名称` | 打印账号目录 |
+| `multi-claude code 名称 [路径] [-- 参数 ...]` | 以账号环境打开一个独立的 VS Code 实例（实验功能） |
 | `multi-claude handoff 目标 [--from 名称] [--session ID] [--force]` | 把一条会话复制到另一个账号，并打印在那边续聊的命令 |
 | `multi-claude statusline install\|uninstall 文件` | 包装设置文件里的 statusLine 命令，让 `usage` 拿到更新的数值；或还原它 |
 | `multi-claude completion bash\|zsh\|fish` | 输出 shell 补全脚本 |
@@ -437,7 +454,7 @@ macOS 上，用 `add` 建立的账号，其登录存放在钥匙串里、名称�
 ./install.sh --uninstall
 ```
 
-只删除工具本身。配置、账号目录、登录和 `claude-<名称>` 启动命令都会保留；启动命令不依赖 multi-claude，可以继续使用。包装过状态栏的，先运行 `multi-claude statusline uninstall 文件`。
+只删除工具本身。配置、账号目录（包括 `code` 在 `<root>/.apps` 下建的 VS Code 数据）、登录和 `claude-<名称>` 启动命令都会保留；启动命令不依赖 multi-claude，可以继续使用。包装过状态栏的，先运行 `multi-claude statusline uninstall 文件`。
 
 ## 参与贡献
 
