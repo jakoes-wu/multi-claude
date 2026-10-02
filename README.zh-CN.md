@@ -72,6 +72,8 @@ curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install
 
 也可以从 PyPI 安装：`pipx install multi-claude-cli`（升级用 `pipx upgrade multi-claude-cli`），命令仍是 `multi-claude`。pipx 和安装脚本二选一，不要同时用：两者都把同一个命令放进 `~/.local/bin`。
 
+用 Homebrew：`brew install jakoes-wu/tap/multi-claude`（升级用 `brew upgrade multi-claude`）。它装在 Homebrew 自己的目录里，先卸掉其它方式装的版本，免得 `PATH` 上有两个 `multi-claude` 命令。
+
 **下载校验**：从 v0.4.0 起，每个 release 都附带 `multi-claude-<tag>.tar.gz` 和 `SHA256SUMS`。远程安装会下载这个包，先校验 SHA-256，不一致就停止安装。安装分支或更早的版本时没有校验，安装脚本会明确提示；设置 `MULTI_CLAUDE_REQUIRE_CHECKSUM=1` 可以拒绝这种安装。校验和与安装包放在同一个 release 里，只能发现下载过程中的损坏或篡改，不能防范 GitHub 账号本身被攻破。
 
 `./install.sh --help` 列出全部选项。
@@ -296,7 +298,7 @@ multi-claude remove main         # 注销账号
 
 ### 怎么升级 multi-claude？
 
-用 pipx 安装的，运行 `pipx upgrade multi-claude-cli`；否则重新运行安装脚本：`curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install.sh | sh`，或在更新后的克隆目录里运行 `./install.sh`。它只替换工具本身，配置、账号和启动命令都保留。新版本改变了启动命令的内容时，`multi-claude doctor` 会报告启动命令已过期，运行 `multi-claude apply` 即可重写。
+用 pipx 安装的，运行 `pipx upgrade multi-claude-cli`；用 Homebrew 安装的，运行 `brew upgrade multi-claude`；否则重新运行安装脚本：`curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install.sh | sh`，或在更新后的克隆目录里运行 `./install.sh`。它只替换工具本身，配置、账号和启动命令都保留。新版本改变了启动命令的内容时，`multi-claude doctor` 会报告启动命令已过期，运行 `multi-claude apply` 即可重写。
 
 ### 直接运行 `claude` 用的是哪个账号？
 
