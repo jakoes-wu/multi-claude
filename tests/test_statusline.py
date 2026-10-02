@@ -17,7 +17,7 @@ from helpers import SRC, CliTestCase
 
 sys.path.insert(0, SRC)
 
-from multi_claude import statusline, usage  # noqa: E402
+from multi_claude import hook, statusline, usage  # noqa: E402
 
 UUID = "11111111-2222-3333-4444-555555555555"
 # 本机实际在用的 claude-hud statusLine：含 '"'"'、$、\t，是引号往返最难的形态。
@@ -56,10 +56,32 @@ class StatuslineTestCase(CliTestCase):
         with open(path or self.settings) as handle:
             return json.load(handle)["statusLine"]["command"]
 
-    def claude_runs(self, command, data, env=None):
-        """按 Claude 的方式执行 statusLine：/bin/sh -c，JSON 从 stdin 进。"""
+    def claude_runs(self, command, data, env=None, sync=False):
+        """按 Claude 的方式执行 statusLine：/bin/sh -c，JSON 从 stdin 进。
+
+        sync=True 时钩子在本进程同步采集，用于判定“不写快照”；默认走真实的后台采集，
+        写入一侧用 wait_for 等快照出现。
+        """
+        env = dict(env or {})
+        if sync:
+            env[hook.SYNC_ENV] = "1"
         return subprocess.run(["/bin/sh", "-c", command], input=data, env=self._merged(env),
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=self.tmp, timeout=60)
+
+    def wait_for(self, path, predicate=None, timeout=10.0):
+        """等后台采集写出快照（可附加内容条件）；超时则用例失败。"""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if os.path.exists(path):
+                try:
+                    with open(path) as handle:
+                        data = json.load(handle)
+                except ValueError:
+                    data = None
+                if data is not None and (predicate is None or predicate(data)):
+                    return data
+            time.sleep(0.05)
+        self.fail("{} was not written in time".format(path))
 
     def snapshot_file(self, name):
         return os.path.join(self.state, "usage", name + ".json")
@@ -105,6 +127,7 @@ class HookTest(StatuslineTestCase):
                     os.unlink(self.snapshot_file("work"))
                 proc = self.claude_runs(self.wrapped("echo shown"), payload(), env={"CLAUDE_CONFIG_DIR": config_dir})
                 self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, b"shown\n", b""))
+                self.wait_for(self.snapshot_file("work"))
                 self.assertEqual(stat.S_IMODE(os.stat(self.snapshot_file("work")).st_mode), 0o600)
                 snap = self.read_snapshot("work")
                 self.assertEqual(snap["config_dir"], os.path.realpath(account_dir))
@@ -118,12 +141,12 @@ class HookTest(StatuslineTestCase):
     def test_t3_default_identity(self):
         command = self.wrapped("true")
         self.ok("add", "work")
-        self.claude_runs(command, payload())
+        self.claude_runs(command, payload(), sync=True)
         self.assertFalse(os.path.exists(os.path.join(self.state, "usage")))
         os.makedirs(os.path.join(self.home, ".claude"))
         self.ok("migrate-default", "main")
         self.claude_runs(command, payload())
-        self.assertTrue(os.path.exists(self.snapshot_file("main")))
+        self.wait_for(self.snapshot_file("main"))
         self.assertFalse(os.path.exists(self.snapshot_file("work")))
 
     def test_t4_failures_do_not_touch_output(self):
@@ -138,7 +161,7 @@ class HookTest(StatuslineTestCase):
         ]
         for label, data, env in cases:
             with self.subTest(label=label):
-                proc = self.claude_runs(self.wrapped(original), data, env=env)
+                proc = self.claude_runs(self.wrapped(original), data, env=env, sync=True)
                 direct = self.claude_runs(original, data, env=env)
                 self.assertEqual((proc.returncode, proc.stdout, proc.stderr),
                                  (direct.returncode, direct.stdout, direct.stderr))
@@ -150,13 +173,13 @@ class HookTest(StatuslineTestCase):
         usage_dir = os.path.join(self.state, "usage")
         os.makedirs(usage_dir)
         os.chmod(usage_dir, 0o500)
-        proc = self.claude_runs(self.wrapped("echo ok"), payload(), env=env)
+        proc = self.claude_runs(self.wrapped("echo ok"), payload(), env=env, sync=True)
         self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, b"ok\n", b""))
         self.assertEqual(os.listdir(usage_dir), [])
         os.chmod(usage_dir, 0o700)
         config = os.path.join(self.state, "config.json")
         self.write(config, "{broken")
-        proc = self.claude_runs(self.wrapped("echo ok"), payload(), env=env)
+        proc = self.claude_runs(self.wrapped("echo ok"), payload(), env=env, sync=True)
         self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, b"ok\n", b""))
         self.assertEqual(os.listdir(usage_dir), [])
 
@@ -165,14 +188,68 @@ class HookTest(StatuslineTestCase):
         env = {"CLAUDE_CONFIG_DIR": os.path.join(self.root, "work")}
         data = payload(five_reset=1790000000, seven_reset=1790500000)
         self.claude_runs(self.wrapped("true"), data, env=env)
-        first = self.read_snapshot("work")["captured_at"]
-        self.claude_runs(self.wrapped("true"), data, env=env)
+        first = self.wait_for(self.snapshot_file("work"))["captured_at"]
+        # 后两次同步采集：判定“没有改写”需要确定采集已经结束。
+        self.claude_runs(self.wrapped("true"), data, env=env, sync=True)
         self.assertEqual(self.read_snapshot("work")["captured_at"], first)
         self.claude_runs(self.wrapped("true"), payload(five=13, five_reset=1790000000, seven_reset=1790500000),
-                         env=env)
+                         env=env, sync=True)
         snap = self.read_snapshot("work")
         self.assertNotEqual(snap["captured_at"], first)
         self.assertEqual(snap["rate_limits"]["five_hour"]["used_percentage"], 13)
+
+    def test_capture_does_not_hold_output(self):
+        """后台采集卡住时，钩子仍立即结束、stdout 立即到 EOF；采集放行后快照照常写出。"""
+        self.ok("add", "work")
+        config = os.path.join(self.state, "config.json")
+        with open(config) as handle:
+            content = handle.read()
+        os.unlink(config)
+        # 读 FIFO 会一直阻塞到有人写入：后台采集因此停在 load_config。
+        os.mkfifo(config)
+        self.addCleanup(self._release_fifo, config)
+        env = {"CLAUDE_CONFIG_DIR": os.path.join(self.root, "work")}
+        started = time.time()
+        proc = self.claude_runs(self.wrapped("echo shown"), payload(), env=env)
+        self.assertLess(time.time() - started, 5)
+        self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, b"shown\n", b""))
+        self.assertFalse(os.path.exists(self.snapshot_file("work")))
+        # 非阻塞打开写端：后台进程还没开始读时会得到 ENXIO，重试到超时，而不是把整套用例挂住。
+        deadline = time.time() + 10
+        while True:
+            try:
+                fd = os.open(config, os.O_WRONLY | os.O_NONBLOCK)
+                break
+            except OSError:
+                if time.time() > deadline:
+                    self.fail("the background capture never opened config.json")
+                time.sleep(0.05)
+        os.set_blocking(fd, True)
+        with os.fdopen(fd, "w") as handle:
+            handle.write(content)
+        self.wait_for(self.snapshot_file("work"))
+
+    @staticmethod
+    def _release_fifo(path):
+        """用例中途失败时，让仍卡在读 FIFO 的后台进程读到 EOF 退出，不留残留进程。"""
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+        except OSError:
+            return
+        os.close(fd)
+
+    def test_hook_entry_stays_light(self):
+        """钩子在 exec 前不加载 cli、accounts 等模块；入口字面量与 HOOK_COMMAND 一致。"""
+        with open(os.path.join(SRC, "multi_claude", "__main__.py")) as handle:
+            self.assertIn('["{}"]'.format(hook.HOOK_COMMAND), handle.read())
+        proc = subprocess.run([sys.executable, "-X", "importtime", "-m", "multi_claude", hook.HOOK_COMMAND, "true"],
+                              input=b"{}", env=self._merged({}), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              cwd=self.tmp, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        imported = proc.stderr.decode()
+        self.assertIn("multi_claude.hook", imported)
+        for heavy in ("multi_claude.cli", "multi_claude.accounts", "multi_claude.config", "multi_claude.platform"):
+            self.assertNotIn(heavy, imported)
 
     def test_bad_hook_arguments(self):
         result = self.run_cli("statusline-hook")
@@ -355,6 +432,7 @@ class MergeTest(StatuslineTestCase):
         self.write_cache(self.now - timedelta(hours=5))
         self.claude_runs(statusline.wrap(self.exe, "true"), payload(five=55),
                          env={"CLAUDE_CONFIG_DIR": self.account_dir})
+        self.wait_for(self.snapshot_file("work"))
         data = self.usage_of_work()
         self.assertEqual((data["source"], data["status"], data["five_hour"]["percent"]), ("statusline", "ok", 55))
         self.assertEqual(data["seven_day"]["percent"], 40)

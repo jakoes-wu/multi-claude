@@ -48,6 +48,8 @@ curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install
 
 工具装到 `~/.local/share/multi-claude`，`multi-claude` 命令装到 `~/.local/bin`。用 `--prefix DIR` 可以装到别处。请确认 `~/.local/bin` 在 `PATH` 中；安装脚本只给出提示，从不修改 shell 配置文件。
 
+`multi-claude` 命令用安装时 `PATH` 上找到的 `python3` 运行。若它是版本管理器的 shim（pyenv、asdf、mise），安装脚本会改写成它背后的真实解释器：shim 每次启动要多花几十毫秒，装了状态栏钩子后每次刷新状态栏都要启动一次。以后卸载了这个 Python 版本，请重新运行安装脚本。
+
 也可以用 `pipx install git+https://github.com/jakoes-wu/multi-claude` 安装。
 
 `./install.sh --help` 列出全部选项。

@@ -97,6 +97,20 @@ case "$PYTHON" in
 esac
 "$PYTHON" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' \
   || die "python3 at ${PYTHON} is older than 3.8"
+case "$PYTHON" in
+  */shims/*)
+    # pyenv / asdf / mise 的 shim 是一段脚本，每次启动多花几十毫秒；状态栏钩子每次刷新都要启动一次，
+    # 所以写入它背后的真实解释器。代价：以后卸载了这个 Python 版本，需要重新运行本脚本。
+    REAL_PYTHON="$("$PYTHON" -c 'import sys; print(sys.executable)' 2>/dev/null || true)"
+    case "$REAL_PYTHON" in
+      *"'"*) REAL_PYTHON="" ;;
+    esac
+    if [ -n "$REAL_PYTHON" ] && [ -x "$REAL_PYTHON" ]; then
+      log "using ${REAL_PYTHON} instead of the shim ${PYTHON}"
+      PYTHON="$REAL_PYTHON"
+    fi
+    ;;
+esac
 
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/multi-claude-install.XXXXXX")"
 trap 'rm -rf "$WORK_DIR"' EXIT
