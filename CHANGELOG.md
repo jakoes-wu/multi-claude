@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-02
+
 ### Added
 
 - `set NAME ...`: change an existing account (proxy, sharing, shared-item
@@ -138,7 +140,8 @@ First release (macOS and Linux).
   program (`.../@anthropic-ai/claude-code/bin/claude.exe`) and the Linux
   systemd user service of the background supervisor.
 
-[Unreleased]: https://github.com/jakoes-wu/multi-claude/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/jakoes-wu/multi-claude/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/jakoes-wu/multi-claude/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/jakoes-wu/multi-claude/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/jakoes-wu/multi-claude/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/jakoes-wu/multi-claude/compare/v0.1.0...v0.2.0
