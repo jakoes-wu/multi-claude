@@ -245,6 +245,20 @@ multi-claude mcp client-a list
 
 `mcp` 用该账号的配置目录、代理和额外环境变量运行 `claude mcp ...`，但不带它的固定参数（否则 `--allowedTools` 这类选项会把 `mcp` 子命令吞掉）。服务器配置由 Claude Code 自己写入。希望该账号所有项目都能用的服务器，请加 `--scope user`。
 
+### 以账号身份运行其它命令
+
+```sh
+multi-claude run work -- claude --version    # 任意命令，环境与 claude-work 完全相同
+multi-claude run work                        # 等同于 claude-work
+multi-claude run -- env                      # 不给账号名：用 claude-auto 在这里会选的账号
+cd "$(multi-claude path work)"               # 账号目录
+multi-claude add client-b --config-from work # 新账号 client-b 复制一份 work 的 settings.json
+```
+
+`run` 设置与启动命令相同的 `CLAUDE_CONFIG_DIR`、代理和额外环境变量；第一个 `--` 之后的内容原样运行，退出码与该命令相同。不给命令时运行 `claude`，带上账号的固定参数。不给账号名时按 `claude-auto` 的路由选账号，并在 stderr 上注明选了哪个；没有匹配的路由也没有默认账号时，要求给出账号名。账号目录不存在时 `path` 以 1 退出。
+
+`--config-from` 只复制一次 `settings.json`，之后两份互不影响。新账号里已有内容不同的 `settings.json`，或者这个账号共享了 `settings.json`，都算冲突，不做任何修改。希望所有账号保持一致的设置，请用[共享资源](#共享资源)。
+
 ### 诊断与补全
 
 `multi-claude doctor` 只读检查：配置与未完成的迁移；`claude` 和启动命令目录是否在 `PATH` 中；每个启动命令是否最新、有没有被同名文件遮住；账号目录是否存在、权限是否为 `0700`；默认账号的软链；断开的共享软链；是否有登录；以及 `ANTHROPIC_API_KEY` 这类会覆盖账号登录的变量。每个问题都附修复命令。有错误时退出码为 1；`--json` 输出供脚本使用。
@@ -259,7 +273,7 @@ multi-claude completion fish > ~/.config/fish/completions/multi-claude.fish
 
 默认账号由三部分组成，Claude Code 只有在**未设置** `CLAUDE_CONFIG_DIR` 时才会找到它们：目录 `~/.claude`、文件 `~/.claude.json`，以及（macOS 上）钥匙串条目 `Claude Code-credentials`。macOS 上其它账号的钥匙串条目与 `CLAUDE_CONFIG_DIR` 的路径字符串一一对应，所以不能简单地让默认账号改用新路径。
 
-因此 `multi-claude migrate-default main` 会：
+因此 `multi-claude migrate-default main` 会（不给名称时，用 `~/.claude.json` 里登录账号的邮箱作为名称）：
 
 1. 把 `~/.claude` 移到 `~/.cc/main`（同一文件系统上直接改名；否则复制、逐个文件校验 SHA-256，再把原目录改名为 `~/.claude.multi-claude-bak.<时间戳>`）；
 2. 在原处留下软链 `~/.claude -> ~/.cc/main`；
@@ -283,6 +297,8 @@ multi-claude completion fish > ~/.config/fish/completions/multi-claude.fish
 复制模式下不复制 socket 和 FIFO。macOS 上复制模式不保留扩展属性。
 
 ### 手工撤销迁移
+
+`multi-claude restore main` 可以撤销迁移：删除软链，把 `~/.cc/main` 移回 `~/.claude`，并注销这个账号（删除它的启动命令；目录里的共享软链保留）。它和 `migrate-default` 一样检查是否有 Claude Code 会话在运行（`--skip-process-check` 跳过），中断后可以重跑。路由仍在使用这个账号、`~/.claude` 指向别处、或两个目录不在同一文件系统时，它拒绝执行，不做任何修改。手工做的话，步骤如下：
 
 ```sh
 rm ~/.claude                     # 删除软链（只删软链）
@@ -327,8 +343,9 @@ multi-claude remove main         # 注销账号
 | 命令 | 作用 |
 | ---- | ---- |
 | `multi-claude init [--root DIR] [--bin-dir DIR] [--shared-dir DIR] [--shared-items A,B]` | 创建或修改全局设置 |
-| `multi-claude migrate-default 名称 [--copy] [--keep-backup] [--proxy P] [--skip-process-check]` | 把 `~/.claude` 变成一个账号 |
-| `multi-claude add 名称 [--proxy P] [--shared [目录] \| --no-shared] [--adopt] [--shared-exclude 项] [--shared-include 项]` | 新增账号、登记已有目录或修改其选项；`--shared 目录` 同时把它设为所有账号的共享目录（默认 `~/.claude-shared`）；`--shared-exclude` 让这个账号不共享某一项，`--shared-include` 撤销 |
+| `multi-claude migrate-default [名称] [--copy] [--keep-backup] [--proxy P] [--skip-process-check]` | 把 `~/.claude` 变成一个账号；不给名称时用其登录邮箱 |
+| `multi-claude restore 名称 [--skip-process-check] [--dry-run]` | 撤销 `migrate-default`：把账号移回 `~/.claude` 并注销，登录保持不变 |
+| `multi-claude add 名称 [--proxy P] [--shared [目录] \| --no-shared] [--adopt] [--shared-exclude 项] [--shared-include 项] [--config-from 其它账号]` | 新增账号、登记已有目录或修改其选项；`--config-from` 从另一个账号复制一次 `settings.json`；`--shared 目录` 同时把它设为所有账号的共享目录（默认 `~/.claude-shared`）；`--shared-exclude` 让这个账号不共享某一项，`--shared-include` 撤销 |
 | `multi-claude set 名称 [--proxy P] [--shared [目录] \| --no-shared] [--shared-exclude 项] [--shared-include 项]` | 修改已有账号，选项同 `add`（没有 `--adopt`）；账号未登记时返回 1 |
 | `multi-claude proxy 名称 端口\|URL\|off\|inherit` | 设置账号代理 |
 | `multi-claude env (名称 \| --defaults) [K=V ...] [--unset K ...]` | 设置或删除额外环境变量 |
@@ -343,6 +360,8 @@ multi-claude remove main         # 注销账号
 | `multi-claude rename 旧名 新名` | 给账号及其启动命令改名，目录与登录不变 |
 | `multi-claude login 名称 [参数 ...]` | 登录该账号（以它的身份运行 `claude auth login 参数 ...`；账号名形如邮箱时会用 `--email` 预填） |
 | `multi-claude mcp 名称 [参数 ...]` | 以该账号的身份运行 `claude mcp 参数 ...` |
+| `multi-claude run [名称] [-- 命令 ...]` | 以启动命令的环境运行命令（默认运行带固定参数的 `claude`）；不给名称时用 `claude-auto` 会选的账号 |
+| `multi-claude path 名称` | 打印账号目录 |
 | `multi-claude handoff 目标 [--from 名称] [--session ID] [--force]` | 把一条会话复制到另一个账号，并打印在那边续聊的命令 |
 | `multi-claude statusline install\|uninstall 文件` | 包装设置文件里的 statusLine 命令，让 `usage` 拿到更新的数值；或还原它 |
 | `multi-claude completion bash\|zsh\|fish` | 输出 shell 补全脚本 |
@@ -410,7 +429,7 @@ macOS 上，用 `add` 建立的账号，其登录存放在钥匙串里、名称�
 | 1 | 运行错误（读写失败、配置文件不合法、校验失败、另一条命令持有锁、账号未登记） |
 | 2 | 命令行参数不合法 |
 | 3 | 与不归 multi-claude 管理的文件冲突，或改动会让登录失效；未做任何修改 |
-| 4 | 迁移源正被占用 |
+| 4 | 要迁移或恢复的目录正被占用 |
 
 ## 卸载
 

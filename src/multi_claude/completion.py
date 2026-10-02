@@ -19,11 +19,12 @@ POSITIONAL_KINDS = {
     "args": ["name"], "remove": ["name"], "usage": ["name"], "completion": ["shell"],
     "route": ["dir", "name"], "which": ["dir"], "rename": ["name"], "mcp": ["name"],
     "statusline": ["statusline", "file"], "handoff": ["name"], "login": ["name"], "set": ["name"],
+    "run": ["name"], "path": ["name"], "restore": ["name"],
 }
 # 选项值是路径、应按文件补全的选项。
 PATH_OPTIONS = ("-f", "--file", "--root", "--bin-dir", "--shared-dir")
 # 选项值是账号名的选项。
-NAME_OPTIONS = ("--default", "--from")
+NAME_OPTIONS = ("--default", "--from", "--config-from")
 FIXED_WORDS = {"shell": SHELLS, "proxy": ("off", "inherit"), "statusline": ("install", "uninstall")}
 
 

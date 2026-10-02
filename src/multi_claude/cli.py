@@ -12,19 +12,20 @@ import platform as py_platform
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
-from . import (__version__, accounts, completion, doctor, hook, identity, migrate, platform, routes, sessions,
-               shellpath, statusline, usage)
+from . import (__version__, accounts, completion, doctor, hook, identity, launcher, migrate, platform, restore,
+               routes, sessions, shellpath, statusline, usage)
 from .actions import error, info, warn
 from .config import (DEFAULT_SHARED_DIR, DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError, RouteRule,
                      is_unshareable, load_config, normalize_proxy, parse_config, validate_env_key, validate_name,
                      validate_route_path, validate_value, config_path)
 from .env import account_env
-from .fsutil import expand
+from .fsutil import KIND_FILE, KIND_LINK, KIND_MISSING, atomic_write, entry_kind, expand, read_text
 from .lock import LockBusyError, WriteLock
 
 # 源码中出现、官方文档未列出的代理变量（方案 §10）：`off` 一期不清除它们，list 时只提示。
@@ -47,13 +48,14 @@ COMMAND_GROUPS = [
         ("set NAME", "change an account: proxy and sharing"),
         ("proxy, env, args", "set the proxy, extra variables or fixed arguments of a launcher"),
         ("rename, remove", "rename or unregister an account"),
-        ("migrate-default", "turn the existing ~/.claude into an account"),
+        ("migrate-default, restore", "turn the existing ~/.claude into an account, or back"),
     ]),
     ("Everyday", [
         ("usage", "5-hour and 7-day usage of each account"),
         ("route, which", "choose an account by directory (launcher claude-auto)"),
         ("handoff", "copy a session to another account"),
         ("mcp", "run `claude mcp` as an account"),
+        ("run, path", "run any command as an account; print its directory"),
     ]),
     ("Setup and checks", [
         ("init, apply", "global settings; converge everything to config.json"),
@@ -116,7 +118,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_mig = sub.add_parser("migrate-default", description="turn the default ~/.claude into a named account "
                                                    "without losing its login")
-    p_mig.add_argument("name")
+    # 省略时依次取：未完成迁移记录里的名称、已有 default 身份账号的名称、~/.claude.json 里登录账号的邮箱。
+    p_mig.add_argument("name", nargs="?")
     p_mig.add_argument("--copy", action="store_true",
                        help="copy and verify instead of renaming (used automatically across file systems)")
     p_mig.add_argument("--keep-backup", action="store_true",
@@ -128,6 +131,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_add = sub.add_parser("add", description="add an account, adopt an existing directory, or change its options")
     _add_account_options(p_add, adopt=True)
+    p_add.add_argument("--config-from", metavar="OTHER",
+                       help="copy settings.json from account OTHER into this account once")
 
     p_set = sub.add_parser("set", description="change an existing account: proxy and sharing "
                                               "(use env, args, rename for the rest)")
@@ -203,6 +208,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_which = sub.add_parser("which", description="show which account claude-auto would use in DIR (default: here)")
     p_which.add_argument("path", nargs="?", metavar="DIR")
 
+    # run 的命令在 argparse 之前从 argv 里切走（见 _split_args_command）。
+    p_run = sub.add_parser("run", description="run a command with the environment of an account's launcher: "
+                                              "run [NAME] [-- COMMAND ...]; without COMMAND it runs claude, "
+                                              "without NAME it uses the account claude-auto would choose here")
+    p_run.add_argument("name", nargs="?")
+
+    p_path = sub.add_parser("path", description="print the directory of an account")
+    p_path.add_argument("name")
+
+    p_restore = sub.add_parser("restore", description="undo migrate-default: move the account directory back to "
+                                                      "~/.claude and unregister the account; the login is kept")
+    p_restore.add_argument("name")
+    p_restore.add_argument("--skip-process-check", action="store_true",
+                           help="do not check whether Claude Code is running (at your own risk)")
+    _add_dry_run(p_restore)
+
     p_completion = sub.add_parser("completion", description="print a shell completion script")
     p_completion.add_argument("shell", choices=completion.SHELLS)
 
@@ -263,7 +284,8 @@ def _add_write_options(parser: argparse.ArgumentParser) -> None:
 
 def _split_args_command(argv: List[str]) -> Tuple[List[str], Optional[List[str]]]:
     """子命令是 `args` 时，把第一个 `--` 之后的全部内容取出来作为参数列表；
-    子命令是 `mcp` 或 `login` 时，账号名之后的全部内容原样作为 `claude mcp` / `claude auth login` 的参数（不经 argparse）。
+    子命令是 `mcp` 或 `login` 时，账号名之后的全部内容原样作为 `claude mcp` / `claude auth login` 的参数（不经 argparse）；
+    子命令是 `run` 时，第一个 `--` 之后的内容是要运行的命令。
 
     不能用 argparse.REMAINDER：可选位置参数加 --defaults 加 REMAINDER 时，
     `args --defaults -- --settings s` 会被解析成账号名 `--settings`（方案 §5.1.2，实测 3.10/3.11/3.13）。
@@ -285,6 +307,12 @@ def _split_args_command(argv: List[str]) -> Tuple[List[str], Optional[List[str]]
             example = "multi-claude mcp NAME list" if command == "mcp" else "multi-claude login NAME"
             raise UsageError("{} needs an account name first, e.g. `{}`".format(command, example))
         return argv[:command_index + 2], rest[1:]
+    if command_index is not None and argv[command_index] == "run":
+        # run 的命令从第一个 `--` 之后原样取出；没有 `--` 与 `--` 后为空都表示“没有命令”（运行 claude）。
+        if "--" not in argv[command_index + 1:]:
+            return argv, None
+        separator = argv.index("--", command_index + 1)
+        return argv[:separator], argv[separator + 1:]
     if command_index is None or argv[command_index] != "args":
         return argv, None
     try:
@@ -366,6 +394,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                 return accounts.EXIT_ERROR
             # 不加写锁：凭据由 Claude 自己写入，登录过程需要浏览器交互，可能持续很久。
             return cmd_login(args.name, args.launch_args or [])
+        if args.command in ("run", "path"):
+            if notice:
+                # 与 mcp 相同：迁移进行到一半时账号目录可能正在搬动。
+                error("finish the unfinished migration before running `{}`".format(args.command))
+                return accounts.EXIT_ERROR
+            # 只读配置、不加写锁：run 会把进程换成目标命令，可能运行很久。
+            if args.command == "path":
+                return cmd_path(args.name)
+            return cmd_run(args.name, args.launch_args or [])
         if args.command == "mcp":
             if notice:
                 # 迁移进行到一半时账号目录可能正在搬动，claude 写进去的内容可能落在半迁移的目录里。
@@ -417,8 +454,10 @@ def _blocked_by_migration(args: argparse.Namespace, notice: Optional[str]) -> bo
 
 
 def dispatch(args: argparse.Namespace) -> int:
+    if args.command == "restore":
+        return restore.restore(_checked_name(args.name), args.skip_process_check, args.dry_run)
     if args.command == "migrate-default":
-        name = _checked_name(args.name)
+        name = _checked_name(args.name) if args.name is not None else _default_migration_name()
         proxy = _checked_proxy(args.proxy) if args.proxy is not None else None
         return migrate.migrate_default(name, None, args.copy, args.keep_backup, proxy,
                                        args.skip_process_check, args.dry_run)
@@ -433,6 +472,8 @@ def dispatch(args: argparse.Namespace) -> int:
     renamed: Optional[Tuple[str, str]] = None
     # --shared DIR 修改全局共享目录时记下 (旧值, 新值)，收敛成功后告诉用户所有共享账号都跟着改了。
     changed_shared_dir: Optional[Tuple[Optional[str], str]] = None
+    # add --config-from：预检通过后要写入的 (目标路径, 文本, 权限位, 来源账号名)；None 表示不复制。
+    config_copy: Optional[Tuple[str, str, int, str]] = None
 
     if args.command == "init":
         if args.root:
@@ -481,6 +522,10 @@ def dispatch(args: argparse.Namespace) -> int:
             if not account.shared:
                 raise UsageError("--adopt requires sharing to be on for {!r}; add --shared".format(account.name))
             adopt_accounts = frozenset([account.name.casefold()])
+        if getattr(args, "config_from", None) is not None:
+            config_copy = _plan_config_copy(new, account, args.config_from, args.verbose)
+            if isinstance(config_copy, int):
+                return config_copy
         warn_names = [account.name]
     elif args.command == "proxy":
         account = new.find(_checked_name(args.name))
@@ -536,6 +581,8 @@ def dispatch(args: argparse.Namespace) -> int:
     if code == accounts.EXIT_OK and renamed is not None and not args.dry_run:
         info("renamed {} to {} (directory {} unchanged)".format(
             renamed[0], renamed[1], accounts.account_dir(new, renamed[1])))
+    if code == accounts.EXIT_OK and config_copy is not None:
+        code = _copy_settings(config_copy, args.dry_run)
     if code == accounts.EXIT_OK:
         accounts.warn_launch_settings(new, warn_names)
         if adopted_dir is not None:
@@ -549,6 +596,104 @@ def dispatch(args: argparse.Namespace) -> int:
                     changed_shared_dir[1], changed_shared_dir[0] or "not set"))
             _hint_empty_shared_dir(new, args.name)
     return code
+
+
+def _default_migration_name() -> str:
+    """migrate-default 省略名称时的名称来源（方案 feature-everyday-commands §5.1.3），按顺序：
+
+    1. 未完成迁移记录里的名称：续跑必须用同一个名字；
+    2. 已有 default 身份账号的名称：迁移后重复执行仍是 already migrated，不会因邮箱名不同而判冲突；
+    3. ~/.claude.json 里登录账号的邮箱（只读这一个字段，不读凭据）。
+    """
+    journal = migrate.load_journal()
+    if journal is not None:
+        return journal["name"]
+    config, _ = load_config()
+    existing = config.default_account()
+    if existing is not None:
+        return existing.name
+    path = os.path.join(os.path.expanduser("~"), ".claude.json")
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except FileNotFoundError:
+        raise UsageError("migrate-default needs a NAME here: {} does not exist".format(path))
+    except (OSError, ValueError) as exc:
+        raise UsageError("migrate-default needs a NAME here: cannot read {} ({})".format(path, exc))
+    oauth = data.get("oauthAccount") if isinstance(data, dict) else None
+    email = oauth.get("emailAddress") if isinstance(oauth, dict) else None
+    if not isinstance(email, str) or not email:
+        raise UsageError("migrate-default needs a NAME here: {} has no login email".format(path))
+    try:
+        validate_name(email)
+    except ValueError as exc:
+        raise UsageError("migrate-default needs a NAME here: the login email cannot be an account name ({})"
+                         .format(exc))
+    info("using the name {} (the email of the login in {})".format(email, path))
+    return email
+
+
+_SETTINGS_FILE = "settings.json"
+
+
+def _plan_config_copy(config: Config, account: Account, other_name: str, verbose: bool):
+    """add --config-from 的预检，必须在收敛之前完成：任何一项不满足都退出，账号不登记、目录不创建。
+
+    返回 (目标路径, 文本, 权限位, 来源账号名)、None（目标已是相同内容，不用复制）或退出码（int）。
+    """
+    other = config.find(_checked_name(other_name))
+    if other is None:
+        error("account {!r} is not registered".format(other_name))
+        return accounts.EXIT_ERROR
+    if other.name == account.name:
+        raise UsageError("--config-from must name another account")
+    source = os.path.join(accounts.account_dir(config, other.name), _SETTINGS_FILE)
+    source_kind = entry_kind(source)
+    if source_kind == KIND_LINK:
+        # 来源是软链说明它是共享条目：两个账号本来就读同一份，复制没有意义。
+        error("{} of {} is a link (a shared item); nothing to copy".format(_SETTINGS_FILE, other.name),
+              path=source)
+        return accounts.EXIT_ERROR
+    if source_kind != KIND_FILE:
+        error("{} has no {} to copy".format(other.name, _SETTINGS_FILE), path=source)
+        return accounts.EXIT_ERROR
+    if (account.shared and _SETTINGS_FILE in config.shared_items
+            and _SETTINGS_FILE not in account.shared_exclude):
+        # 收敛会在目标处建共享软链，复制再把它换成普通文件：共享被悄悄断开，之后每次收敛都判冲突。
+        error("{} shares {}; copying would replace the shared link. Exclude it first with "
+              "--shared-exclude {}".format(account.name, _SETTINGS_FILE, _SETTINGS_FILE))
+        return accounts.EXIT_CONFLICT
+    try:
+        with open(source, "r", encoding="utf-8") as handle:
+            text = handle.read()
+        mode = stat.S_IMODE(os.stat(source).st_mode)
+    except (OSError, ValueError) as exc:
+        error("cannot read {}: {}".format(source, exc), path=source)
+        return accounts.EXIT_ERROR
+    target = os.path.join(accounts.account_dir(config, account.name), _SETTINGS_FILE)
+    target_kind = entry_kind(target)
+    if target_kind == KIND_MISSING:
+        return (target, text, mode, other.name)
+    if target_kind == KIND_FILE and read_text(target) == text:
+        if verbose:
+            info("{} of {} already matches {} (unchanged)".format(_SETTINGS_FILE, account.name, other.name))
+        return None
+    error("{} already exists with different content; move it away first".format(target), path=target)
+    return accounts.EXIT_CONFLICT
+
+
+def _copy_settings(planned: Tuple[str, str, int, str], dry_run: bool) -> int:
+    """收敛成功后写入预检读到的文本；写之前再确认目标仍不存在，避免覆盖收敛期间出现的软链或文件。"""
+    target, text, mode, other_name = planned
+    if dry_run:
+        info("would copy {} from {}".format(_SETTINGS_FILE, other_name))
+        return accounts.EXIT_OK
+    if entry_kind(target) != KIND_MISSING:
+        warn("{} appeared while adding the account; not copied".format(target))
+        return accounts.EXIT_OK
+    atomic_write(target, text, mode=mode)
+    info("copied {} from {}".format(_SETTINGS_FILE, other_name))
+    return accounts.EXIT_OK
 
 
 def _apply_shared_exclude(config: Config, account: Account, exclude: List[str], include: List[str]) -> None:
@@ -639,6 +784,17 @@ def _account_process_env(name: str) -> Tuple[Optional[dict], int]:
     if account is None:
         error("account {!r} is not registered".format(name))
         return None, accounts.EXIT_ERROR
+    process_env, code = _usable_account_env(config, account)
+    if process_env is None:
+        return None, code
+    if shutil.which("claude", path=process_env.get("PATH")) is None:
+        error("claude not found in PATH")
+        return None, 127
+    return process_env, accounts.EXIT_OK
+
+
+def _usable_account_env(config: Config, account: Account) -> Tuple[Optional[dict], int]:
+    """账号能否以启动命令的身份运行：目录存在，default 身份时 ~/.claude 仍指向它。返回 (进程环境, 0) 或 (None, 1)。"""
     directory = accounts.account_dir(config, account.name)
     if not os.path.isdir(directory):
         error("account directory does not exist: {}".format(directory))
@@ -648,11 +804,62 @@ def _account_process_env(name: str) -> Tuple[Optional[dict], int]:
         error("{} no longer points to {}; restore the link or run multi-claude migrate-default again".format(
             accounts.default_dir(), directory))
         return None, accounts.EXIT_ERROR
-    process_env = account_env(config, account, os.environ)
-    if shutil.which("claude", path=process_env.get("PATH")) is None:
-        error("claude not found in PATH")
-        return None, 127
-    return process_env, accounts.EXIT_OK
+    return account_env(config, account, os.environ), accounts.EXIT_OK
+
+
+def cmd_run(name: Optional[str], command: List[str]) -> int:
+    """以账号启动命令的环境运行任意命令（方案 feature-everyday-commands §5.1.1）。
+
+    不给命令时运行 claude 加账号的固定参数，与 claude-NAME 逐项一致；不给 NAME 时按 claude-auto 的路由选账号。
+    成功时用 exec 把本进程换成目标命令，退出码与信号都由它决定，不会返回。
+    """
+    config, _ = load_config()
+    if name is not None:
+        account = config.find(_checked_name(name))
+        if account is None:
+            error("account {!r} is not registered".format(name))
+            return accounts.EXIT_ERROR
+    else:
+        account, rule = routes.resolve(config, os.getcwd())
+        if account is None:
+            if rule is not None or config.route_default is not None:
+                error("the route for this directory uses account {!r}, which is not registered; run "
+                      "`multi-claude doctor`".format(rule.account if rule else config.route_default))
+                return accounts.EXIT_ERROR
+            raise UsageError("no route or default account applies here; give the account name, "
+                             "e.g. `multi-claude run NAME`")
+        # 提示写 stderr：stdout 留给目标命令，`run -- cmd | …` 才不会混进这一行。
+        print("[multi-claude] run: using account {} ({})".format(
+            account.name, "route " + rule.path if rule is not None else "default"), file=sys.stderr)
+    process_env, code = _usable_account_env(config, account)
+    if process_env is None:
+        return code
+    if not command:
+        # 固定参数按启动命令的规则展开 `~`（launcher.render），两种启动方式收到的参数才逐项相同。
+        command = ["claude"] + [launcher.expand_value(arg) for arg in config.effective_args(account)]
+    if shutil.which(command[0], path=process_env.get("PATH")) is None:
+        error("{} not found in PATH".format(command[0]))
+        return 127
+    sys.stdout.flush()
+    sys.stderr.flush()
+    # exec 失败（权限、格式错误）抛 OSError，由 main 统一按退出码 1 报告。
+    os.execvpe(command[0], command, process_env)
+    return accounts.EXIT_ERROR  # 不会执行到这里：execvpe 成功后不返回
+
+
+def cmd_path(name: str) -> int:
+    """打印账号目录；目录不存在时照样打印，但以 1 退出，脚本里 `cd "$(multi-claude path X)"` 不会静默进错目录。"""
+    config, _ = load_config()
+    account = config.find(_checked_name(name))
+    if account is None:
+        error("account {!r} is not registered".format(name))
+        return accounts.EXIT_ERROR
+    directory = accounts.account_dir(config, account.name)
+    print(directory)
+    if not os.path.isdir(directory):
+        error("account directory does not exist: {}".format(directory))
+        return accounts.EXIT_ERROR
+    return accounts.EXIT_OK
 
 
 def cmd_mcp(name: str, claude_args: List[str]) -> int:
@@ -809,7 +1016,7 @@ def _looks_like_path(value: str) -> bool:
 
 
 # add/set 里取一个值的选项：判断位置参数时要跳过它们的值。
-_VALUE_OPTIONS = ("--proxy", "--shared-exclude", "--shared-include")
+_VALUE_OPTIONS = ("--proxy", "--shared-exclude", "--shared-include", "--config-from")
 
 
 def _misplaced_account_name(argv: List[str]) -> Optional[str]:

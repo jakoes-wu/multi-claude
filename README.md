@@ -245,6 +245,20 @@ multi-claude mcp client-a list
 
 `mcp` runs `claude mcp ...` with the account's configuration directory, proxy and extra environment variables, but without its fixed arguments (options such as `--allowedTools` would otherwise swallow the `mcp` subcommand). Claude Code itself writes the server configuration. Use `--scope user` for a server that should be available in every project of that account.
 
+### Running other commands as an account
+
+```sh
+multi-claude run work -- claude --version    # any command, with exactly the environment of claude-work
+multi-claude run work                        # same as claude-work
+multi-claude run -- env                      # without NAME: the account claude-auto would use here
+cd "$(multi-claude path work)"               # the account's directory
+multi-claude add client-b --config-from work # start client-b with a copy of work's settings.json
+```
+
+`run` sets the same `CLAUDE_CONFIG_DIR`, proxy and extra variables as the launcher; everything after the first `--` is run unchanged and its exit code is returned. Without a command it runs `claude` with the account's fixed arguments. Without NAME it follows the routes of `claude-auto` and prints the chosen account on stderr; with no route and no default it asks for NAME. `path` exits with 1 if the directory is missing.
+
+`--config-from` copies `settings.json` once; afterwards the two files are independent. A different existing `settings.json` in the new account, or a `settings.json` that the account shares, is a conflict and nothing is changed. Use [shared resources](#shared-resources) for settings that should stay the same in every account.
+
 ### Diagnostics and completion
 
 `multi-claude doctor` checks, without changing anything: the configuration and any unfinished migration, whether `claude` and the launcher directory are on `PATH`, whether each launcher is up to date and not hidden by another file of the same name, whether each account directory exists and is private (`0700`), the default account's link, broken shared links, whether a login exists, and variables such as `ANTHROPIC_API_KEY` that override the accounts' logins. Every problem comes with the command that fixes it. It exits with 1 when there is an error; `--json` prints the results for scripts.
@@ -259,7 +273,7 @@ multi-claude completion fish > ~/.config/fish/completions/multi-claude.fish
 
 The default account is made of three parts that Claude Code finds only when `CLAUDE_CONFIG_DIR` is **not** set: the directory `~/.claude`, the file `~/.claude.json`, and (on macOS) the keychain item `Claude Code-credentials`. On macOS, the keychain item of every other account is tied to the exact path string in `CLAUDE_CONFIG_DIR`, so the default account cannot simply be pointed at a new path.
 
-`multi-claude migrate-default main` therefore:
+`multi-claude migrate-default main` therefore (without a name it uses the email address of the login in `~/.claude.json`):
 
 1. moves `~/.claude` to `~/.cc/main` (rename on the same file system; otherwise copy, verify every file by SHA-256, and park the original as `~/.claude.multi-claude-bak.<timestamp>`);
 2. leaves the link `~/.claude -> ~/.cc/main`;
@@ -283,6 +297,8 @@ Progress is recorded in `~/.config/multi-claude/migrate-journal.json`. If the mi
 Sockets and FIFOs are not copied in copy mode. On macOS, copy mode does not preserve extended attributes.
 
 ### Undoing a migration by hand
+
+`multi-claude restore main` undoes the migration: it removes the link, moves `~/.cc/main` back to `~/.claude` and unregisters the account (its launcher is deleted; shared links inside the directory stay). It checks for running Claude Code sessions like `migrate-default` (`--skip-process-check` skips that) and can be run again if it is interrupted. It refuses, without changing anything, when a route still uses the account, when `~/.claude` points elsewhere, or when the two directories are on different file systems. By hand, the same steps are:
 
 ```sh
 rm ~/.claude                     # remove the link (only the link)
@@ -327,8 +343,9 @@ No. It never reads, copies or deletes credentials; its only keychain call checks
 | Command | What it does |
 | ---- | ---- |
 | `multi-claude init [--root DIR] [--bin-dir DIR] [--shared-dir DIR] [--shared-items A,B]` | Create or change global settings. |
-| `multi-claude migrate-default NAME [--copy] [--keep-backup] [--proxy P] [--skip-process-check]` | Turn `~/.claude` into an account. |
-| `multi-claude add NAME [--proxy P] [--shared [DIR] \| --no-shared] [--adopt] [--shared-exclude ITEM] [--shared-include ITEM]` | Add an account, adopt an existing directory, or change its options. `--shared DIR` also makes DIR the shared directory for every account (default `~/.claude-shared`). `--shared-exclude` keeps one shared item out of this account; `--shared-include` undoes it. |
+| `multi-claude migrate-default [NAME] [--copy] [--keep-backup] [--proxy P] [--skip-process-check]` | Turn `~/.claude` into an account. Without NAME, the email address of its login is used. |
+| `multi-claude restore NAME [--skip-process-check] [--dry-run]` | Undo `migrate-default`: move the account back to `~/.claude` and unregister it. The login is kept. |
+| `multi-claude add NAME [--proxy P] [--shared [DIR] \| --no-shared] [--adopt] [--shared-exclude ITEM] [--shared-include ITEM] [--config-from OTHER]` | Add an account, adopt an existing directory, or change its options. `--config-from` copies `settings.json` from OTHER once. `--shared DIR` also makes DIR the shared directory for every account (default `~/.claude-shared`). `--shared-exclude` keeps one shared item out of this account; `--shared-include` undoes it. |
 | `multi-claude set NAME [--proxy P] [--shared [DIR] \| --no-shared] [--shared-exclude ITEM] [--shared-include ITEM]` | Change an existing account; same options as `add` without `--adopt`. Returns 1 for an account that is not registered. |
 | `multi-claude proxy NAME PORT\|URL\|off\|inherit` | Set an account's proxy. |
 | `multi-claude env (NAME \| --defaults) [K=V ...] [--unset K ...]` | Set or remove extra environment variables. |
@@ -343,6 +360,8 @@ No. It never reads, copies or deletes credentials; its only keychain call checks
 | `multi-claude rename OLD NEW` | Rename an account and its launcher. The directory and the login stay. |
 | `multi-claude login NAME [ARG ...]` | Sign in to that account (runs `claude auth login ARG ...` as it; an e-mail-like name is pre-filled with `--email`). |
 | `multi-claude mcp NAME [ARG ...]` | Run `claude mcp ARG ...` as that account. |
+| `multi-claude run [NAME] [-- COMMAND ...]` | Run a command (default: `claude` with the fixed arguments) with the environment of the account's launcher. Without NAME, the account `claude-auto` would use. |
+| `multi-claude path NAME` | Print the account's directory. |
 | `multi-claude handoff TARGET [--from NAME] [--session ID] [--force]` | Copy a session to another account and print the command that resumes it there. |
 | `multi-claude statusline install\|uninstall FILE` | Wrap the statusLine command in a settings file so that `usage` gets fresh numbers, or restore it. |
 | `multi-claude completion bash\|zsh\|fish` | Print a shell completion script. |
@@ -410,7 +429,7 @@ If you move an account directory yourself, its launcher reports that the directo
 | 1 | Runtime error (I/O, invalid configuration file, failed verification, lock held by another command, account not registered) |
 | 2 | Invalid command-line arguments |
 | 3 | Conflict with files multi-claude does not own, or a change that would break a login; nothing was changed |
-| 4 | The migration source is in use |
+| 4 | The directory to migrate or restore is in use |
 
 ## Uninstalling
 
