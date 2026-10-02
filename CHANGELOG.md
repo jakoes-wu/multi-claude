@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Every release publishes `multi-claude-<tag>.tar.gz` and `SHA256SUMS`
+  (workflow `release.yml`, which also checks that `__version__` matches the
+  tag). `install.sh` downloads that archive and verifies its SHA-256 before
+  installing; releases without it, and branches, are installed with a note
+  that they are unverified. New variables: `MULTI_CLAUDE_SHA256`,
+  `MULTI_CLAUDE_REQUIRE_CHECKSUM=1`, `MULTI_CLAUDE_CODELOAD`.
+
+### Changed
+
+- `MULTI_CLAUDE_REF=vX.Y.Z` fails when the release cannot be read, instead
+  of falling back to an unverified download.
+
 ## [0.3.1] - 2026-10-02
 
 ### Changed
