@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- README FAQ: why there is no command that switches the account of plain
+  `claude`, and what to use instead.
+
 ## [0.6.0] - 2026-10-03
 
 ### Added

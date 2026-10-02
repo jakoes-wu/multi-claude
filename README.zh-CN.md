@@ -336,6 +336,8 @@ multi-claude remove main         # 注销账号
 
 和以前一样，用 `~/.claude`：multi-claude 不会改变它。[迁移 `~/.claude`](#迁移-claude) 之后就是迁移出来的那个账号。想按目录自动选账号，用 `claude-auto`，见[按目录选账号](#按目录选账号)。
 
+没有“切换直接运行 `claude` 所用账号”的命令。除了 `~/.claude`，直接运行的 `claude` 还会读钥匙串里的登录（macOS）和 `~/.claude.json`，这两样都不会跟着切换，结果是两个账号的东西混在一起。请用各账号的启动命令（如 `claude-work`），或者 `multi-claude route --default work` 后运行 `claude-auto`。
+
 ### 怎么把对话交给另一个账号继续？
 
 在 Claude 会话里运行 `! multi-claude handoff 另一个账号`，再在新终端里运行它打印出的命令。见[把会话交给另一个账号](#把会话交给另一个账号)。
