@@ -1,10 +1,10 @@
 # multi-claude：按目录自动选账号（`claude-auto`）
 
-> 2026-10-01 注记：plan-review 2 轮收敛，用户同意编码；代码已按方案实现，待独立代码评审与编译机验证，未提交。来源：`docs/analysis/competitor-analysis.md` §6.2 第 1 项。基线：main `3402c25`。用户决定：入口命令为 `claude-auto`（与名为 `auto` 的账号冲突时判冲突）；未匹配时用配置的默认账号，未配置则直接运行 `claude`；规则只存在 `config.json`，不读写项目内的标记文件。
+> 2026-10-01 注记：已合并（PR #5），随 v0.2.0 发布。来源：`docs/analysis/roadmap.md` §2.2。基线：main `3402c25`。用户决定：入口命令为 `claude-auto`（与名为 `auto` 的账号冲突时判冲突）；未匹配时用配置的默认账号，未配置则直接运行 `claude`；规则只存在 `config.json`，不读写项目内的标记文件。
 
 ## 1. 背景
 
-目前要用哪个账号，取决于用户输入哪个 `claude-<名称>`。竞品（claude-swap `map`、claude-profile-manager、cprof、dotclaude）普遍支持“按当前目录自动选账号”。本方案在不修改 shell 配置、不碰凭据的前提下补上这一能力：新增一个由配置生成的入口命令 `claude-auto`，启动时按当前目录选出账号，再转交给该账号的 `claude-<名称>`。
+目前要用哪个账号，取决于用户输入哪个 `claude-<名称>`。本方案在不修改 shell 配置、不碰凭据的前提下，加上“按当前目录自动选账号”：新增一个由配置生成的入口命令 `claude-auto`，启动时按当前目录选出账号，再转交给该账号的 `claude-<名称>`。
 
 ## 2. 目标 / 非目标
 

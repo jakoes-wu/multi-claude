@@ -1,6 +1,6 @@
 # multi-claude：共享项按账号退出与禁止共享清单
 
-> 2026-10-01 注记：plan-review 2 轮收敛，用户同意编码；代码已按方案实现（`config.py` `UNSHAREABLE_ITEMS` / `Account.shared_exclude`、`shared.py` `plan_shared`、`cli.py` `_apply_shared_exclude` / `_shared_cell`），本机 242 用例通过，待独立代码评审与编译机验证，未提交。来源：`docs/analysis/competitor-analysis.md` §6.2 第 9 条、§7 表“共享项按账号退出”行。基线：main `a397796`。用户决定（2026-10-01）：
+> 2026-10-01 注记：已合并（PR #9），随 v0.2.0 发布。来源：`docs/analysis/roadmap.md` §2.3。基线：main `a397796`。用户决定（2026-10-01）：
 >
 > - 配置写法：`add NAME --shared-exclude ITEM`（可重复），`--shared-include ITEM` 撤销；
 > - 退出一项时：只删本工具建的软链，与关闭共享一致，不复制内容；

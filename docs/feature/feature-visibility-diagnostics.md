@@ -1,10 +1,10 @@
 # multi-claude v0.2：用量、诊断、补全与鉴权变量隔离
 
-> 2026-10-01 注记：plan-review 2 轮收敛，用户同意编码；代码已按方案实现，待独立代码评审与编译机验证，未提交。来源：`docs/analysis/competitor-analysis.md` §6.1 与 §7 的用户决定（用量只用零凭据来源；启动命令默认清除鉴权覆盖变量）。基线：main `61e5d41`（v0.1.0）。
+> 2026-10-01 注记：已合并（PR #4），随 v0.2.0 发布。来源：`docs/analysis/roadmap.md` §2.1；用户决定：用量只用零凭据来源，启动命令默认清除鉴权覆盖变量。基线：main `61e5d41`（v0.1.0）。
 
 ## 1. 背景
 
-v0.1.0 已发布（`docs/feature/feature-account-manager.md`）。与竞品对比后，用户决定在 v0.2 补齐以下能力：
+v0.1.0 已发布（`docs/feature/feature-account-manager.md`）。按升级路线（`docs/analysis/roadmap.md`），用户决定在 v0.2 补齐以下能力：
 
 - 查看各账号的 5 小时 / 7 天用量；
 - 一条命令检查多账号环境是否健康；

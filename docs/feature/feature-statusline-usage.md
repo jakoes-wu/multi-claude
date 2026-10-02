@@ -1,6 +1,6 @@
 # multi-claude：通过 statusLine 采集账号用量
 
-> 2026-10-01 注记：plan-review 2 轮收敛，用户同意编码；代码已按方案实现（`src/multi_claude/statusline.py`、`usage.py` `read_account_usage`、`cli.py` `main` 开头的钩子拦截与 `cmd_statusline`），本机 230 个用例通过，待独立代码评审与编译机验证，未提交。来源：`docs/analysis/competitor-analysis.md` §6.2 “statusline 实时用量”。基线：main `da41835`。用户决定：注入方式为“包装现有 statusLine”，不新建 statusLine、不改启动命令。
+> 2026-10-01 注记：已合并（PR #7），随 v0.2.0 发布；钩子提速见 `feature-hook-latency.md`（v0.2.1）。实机验证（T15）已通过。来源：`docs/analysis/roadmap.md` §2.3。基线：main `da41835`。用户决定：注入方式为“包装现有 statusLine”，不新建 statusLine、不改启动命令。
 
 ## 1. 背景
 
