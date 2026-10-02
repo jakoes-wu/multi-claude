@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- `statusline install` and the README say that running sessions keep the
+  old status line; usage is recorded from new sessions after their first
+  reply.
+- `add --shared NAME` (account name after the options) gets an error that
+  says to put the name first, instead of "name is required".
+- `docs/analysis/roadmap.md` records the v0.3.0 changes and explains that
+  its v0.2/v0.3/v0.4 groups are not release numbers.
+
 ## [0.3.0] - 2026-10-02
 
 ### Added

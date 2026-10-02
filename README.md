@@ -168,6 +168,7 @@ multi-claude statusline install ~/.claude/settings.json
 The command becomes `<path of multi-claude> statusline-hook '<original command>'`. The hook saves the usage of the account it runs under (recognised by `CLAUDE_CONFIG_DIR`) in `~/.config/multi-claude/usage/` and then runs the original command with `/bin/sh -c`, so the status line looks and behaves the same. Only the percentages and reset times are saved, never the rest of the status-line data. `usage` then shows whichever is newer, the cache or the status line, and marks the latter `(statusline)`; `--json` has a `source` field.
 
 - Only a file with an existing `"type": "command"` status line can be wrapped; the file is backed up next to itself (`*.multi-claude-bak.*`) before every change, and only `statusLine.command` changes. A symlinked file is changed at its target.
+- Claude sessions that are already running keep the old status line. Usage is recorded from sessions started after `install`, once they have had their first reply.
 - If several settings files define `statusLine`, wrap the one that wins (for example a file passed with `--settings` in the launcher arguments).
 - Run `multi-claude statusline uninstall FILE` before uninstalling multi-claude; otherwise the status line stays empty because the wrapped command cannot be found. Running `install` again after multi-claude moves updates the path.
 

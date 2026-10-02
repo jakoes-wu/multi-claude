@@ -310,7 +310,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         # 不带参数：新用户先看到怎么上手，已有配置的用户看到账号表（方案 feature-easier-onboarding §5.1.1）。
         return cmd_overview()
     parser = build_parser()
-    unknown = _unknown_command(parser, argv)
+    unknown = _unknown_command(parser, argv) or _misplaced_account_name(argv)
     if unknown is not None:
         error(unknown)
         return accounts.EXIT_USAGE
@@ -804,9 +804,52 @@ def _has_account_option(args: argparse.Namespace) -> bool:
                 or args.shared_exclude or args.shared_include)
 
 
+def _looks_like_path(value: str) -> bool:
+    return "/" in value or value.startswith(("~", "."))
+
+
+# add/set 里取一个值的选项：判断位置参数时要跳过它们的值。
+_VALUE_OPTIONS = ("--proxy", "--shared-exclude", "--shared-include")
+
+
+def _misplaced_account_name(argv: List[str]) -> Optional[str]:
+    """`add --shared work` 这类把账号名写在选项后面的输入：argparse 会把 work 当成 --shared 的目录，
+    再报“缺少 name”，看不出原因。只在“除这个词外没有任何位置参数”（argparse 本来就会报错）时接管报错。
+    """
+    # --version / --help 会让 argparse 直接输出后正常退出；--no-shared 与 --shared 同时出现时
+    # argparse 会报互斥错误，那条更准确。这几种情况都不接管。
+    if any(token in ("--version", "-h", "--help", "--no-shared") for token in argv):
+        return None
+    command_index = next((i for i, token in enumerate(argv) if not token.startswith("-")), None)
+    if command_index is None or argv[command_index] not in ("add", "set"):
+        return None
+    rest = argv[command_index + 1:]
+    candidate = None
+    positionals = []
+    index = 0
+    while index < len(rest):
+        token = rest[index]
+        if token in _VALUE_OPTIONS:
+            index += 2
+            continue
+        if token == "--shared":
+            following = rest[index + 1] if index + 1 < len(rest) else None
+            if following is not None and not following.startswith("-") and not _looks_like_path(following):
+                candidate = following
+            index += 2 if following is not None and not following.startswith("-") else 1
+            continue
+        if not token.startswith("-"):
+            positionals.append(token)
+        index += 1
+    if candidate is None or positionals:
+        return None
+    return "put the account name before the options, e.g. multi-claude {} {} --shared".format(
+        argv[command_index], candidate)
+
+
 def _checked_shared_dir(value: str) -> str:
     """--shared DIR 的值必须像路径，免得把 `add --shared work` 里的账号名之类的词当成目录。"""
-    if not ("/" in value or value.startswith(("~", "."))):
+    if not _looks_like_path(value):
         raise UsageError("--shared DIR expects a directory path, e.g. --shared ~/claude-shared; got {!r}".format(value))
     return value
 
@@ -1234,6 +1277,10 @@ def cmd_statusline(action: str, path: str, dry_run: bool) -> int:
         info("backup: {}".format(result.backup))
     if changed:
         info("command: {}".format(result.command))
+    if not dry_run and result.state in (statusline.WRAPPED, statusline.REWRAPPED):
+        # 实测（2026-10-01）：包装前就在运行的会话一直不产生快照，新会话收到第一次回复后才有。
+        info("note: Claude sessions that are already running keep the old status line. Usage is recorded from "
+             "sessions started after `install`, once they have had their first reply")
     return accounts.EXIT_OK
 
 
