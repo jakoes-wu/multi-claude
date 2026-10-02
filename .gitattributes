@@ -1,0 +1,3 @@
+# 演示图与社交预览图只给 README 和 GitHub 设置用，不打进 release 源码包：
+# install.sh 下载的是 git archive 生成的包（.github/workflows/release.yml），图片只会让它变大。
+docs/assets export-ignore

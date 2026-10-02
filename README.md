@@ -2,7 +2,24 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-Run several [Claude Code](https://code.claude.com/docs) accounts side by side on one machine.
+[![Release](https://img.shields.io/github/v/release/jakoes-wu/multi-claude)](https://github.com/jakoes-wu/multi-claude/releases)
+[![CI](https://github.com/jakoes-wu/multi-claude/actions/workflows/ci.yml/badge.svg)](https://github.com/jakoes-wu/multi-claude/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.8%2B-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+Use several [Claude Code](https://code.claude.com/docs) accounts on one machine, at the same time. Each account keeps its own login, settings and history and, if you like, its own proxy. No more logging out and in again.
+
+```sh
+claude-work        # Claude Code with your work account
+claude-personal    # Claude Code with your personal account, in another terminal
+multi-claude       # your accounts, their logins and usage
+```
+
+![multi-claude demo: add two accounts and list them](https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/docs/assets/demo.gif)
+
+<sub>The accounts in the demo are examples.</sub>
+
+## How it works
 
 Claude Code keeps its settings, login and history in the directory named by `CLAUDE_CONFIG_DIR` (default `~/.claude`). The official documentation suggests one directory per account. multi-claude manages those directories for you and gives every account its own launcher command, optionally with its own proxy, environment variables and fixed arguments:
 
@@ -13,6 +30,8 @@ claude-main       -> your original ~/.claude account, still logged in
 claude            -> unchanged
 ```
 
+The launchers are plain shell scripts. They keep working even if you uninstall multi-claude.
+
 ## Features
 
 - **Migrate the default account** — move your existing `~/.claude` into the account root without logging out. `claude` keeps working exactly as before.
@@ -20,7 +39,7 @@ claude            -> unchanged
 - **Per-account proxy** — a local port, an HTTP(S) proxy URL, `off`, or `inherit`.
 - **Extra environment variables and fixed arguments** — global defaults plus per-account values, for example `--settings` or `--permission-mode`.
 - **One-step deployment** — `install.sh --config accounts.json` installs the tool and creates every account in the file.
-- **Idempotent** — every command can be re-run safely. Unchanged state is reported as `unchanged`; conflicts with files multi-claude does not own are reported without changing anything; an interrupted migration resumes where it stopped.
+- **Idempotent** — every command can be re-run safely. Write commands print only what changes (`--verbose` lists everything); conflicts with files multi-claude does not own are reported without changing anything; an interrupted migration resumes where it stopped.
 - **Optional shared resources** — link `CLAUDE.md`, `skills`, `agents` and `commands` from one shared directory into selected accounts.
 - **Hands off your credentials** — multi-claude never reads, copies or deletes logins. Its only keychain call checks whether an item exists.
 
@@ -58,13 +77,35 @@ Run `./install.sh --help` for all options.
 
 ## Quick start
 
+### 1. Create one account per login
+
 ```sh
 multi-claude add work --proxy 7901   # an account "work" with its own launcher, through a local proxy on port 7901
-multi-claude login work              # sign in to it
-claude-work                          # start Claude Code with that account
-
-multi-claude                         # show your accounts
+multi-claude add personal            # another one that uses your shell's proxy settings
 ```
+
+### 2. Log in once per account
+
+```sh
+multi-claude login work              # runs `claude auth login` for that account
+multi-claude login personal
+```
+
+### 3. Use the launchers instead of `claude`
+
+```sh
+claude-work                          # in one terminal
+claude-personal                      # in another, at the same time
+```
+
+### 4. Check that everything is right
+
+```sh
+multi-claude                         # accounts, logins, usage and any problem
+multi-claude doctor                  # a full check, with a fix for each problem
+```
+
+### Already using Claude Code?
 
 Your existing `~/.claude` is not touched and keeps working as plain `claude`. To manage it as an account too, see [Migrating `~/.claude`](#migrating-claude) (optional; run it from a plain terminal with all Claude sessions closed).
 
@@ -249,6 +290,32 @@ multi-claude remove main         # unregister the account
 Nothing else needs to change: the login and `~/.claude.json` were never touched. With `--keep-backup` in copy mode, the original directory stays at `~/.claude.multi-claude-bak.<timestamp>`.
 
 If a migration stops with an error and you want to abandon it: the error message says where the complete data is; move it back to `~/.claude` and delete `~/.config/multi-claude/migrate-journal.json`.
+
+## FAQ
+
+### How do I upgrade multi-claude?
+
+Run the installer again: `curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install.sh | sh`, or `./install.sh` from an updated clone. It replaces only the tool; your configuration, accounts and launchers stay. When a release changes what launchers contain, `multi-claude doctor` reports them as stale and `multi-claude apply` rewrites them.
+
+### Which account does plain `claude` use?
+
+The one in `~/.claude`, as before: multi-claude does not change it. After [migrating `~/.claude`](#migrating-claude) it is the migrated account. `claude-auto` picks an account by directory instead; see [Choosing an account by directory](#choosing-an-account-by-directory).
+
+### How do I continue a conversation with another account?
+
+Inside the Claude session, run `! multi-claude handoff OTHER`, then run the command it prints in a new terminal. See [Handing a session over to another account](#handing-a-session-over-to-another-account).
+
+### Why does `usage` show old numbers?
+
+By default the numbers come from the cache that Claude Code writes in `.claude.json`, which can be hours old. `multi-claude statusline install FILE` records fresh numbers from your status line in every new session; see [Usage](#usage).
+
+### How do I share skills and `CLAUDE.md` between accounts?
+
+`multi-claude set NAME --shared` links them from `~/.claude-shared`, or from the shared directory you have set. See [Shared resources](#shared-resources).
+
+### Does multi-claude read or copy my login?
+
+No. It never reads, copies or deletes credentials; its only keychain call checks whether an item exists. On macOS a login is tied to the account directory's path, which is why `rename` keeps the directory.
 
 ## Reference
 

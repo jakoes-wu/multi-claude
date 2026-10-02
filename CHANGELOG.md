@@ -14,6 +14,12 @@ All notable changes to this project are documented here. The format follows
   installing; releases without it, and branches, are installed with a note
   that they are unverified. New variables: `MULTI_CLAUDE_SHA256`,
   `MULTI_CLAUDE_REQUIRE_CHECKSUM=1`, `MULTI_CLAUDE_CODELOAD`.
+- The package is published to PyPI as `multi-claude-cli` (workflow
+  `pypi.yml`); the command is still `multi-claude`.
+- The README opens with a short example and a demo animation, has a
+  four-step quick start and an FAQ. `scripts/make-assets.py` regenerates the
+  animation and the social preview image in a temporary HOME;
+  `docs/assets/` is left out of release archives.
 
 ### Changed
 

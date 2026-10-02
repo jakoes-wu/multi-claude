@@ -2,7 +2,24 @@
 
 [English](README.md) | **简体中文**
 
-在一台机器上同时使用多个 [Claude Code](https://code.claude.com/docs) 账号。
+[![Release](https://img.shields.io/github/v/release/jakoes-wu/multi-claude)](https://github.com/jakoes-wu/multi-claude/releases)
+[![CI](https://github.com/jakoes-wu/multi-claude/actions/workflows/ci.yml/badge.svg)](https://github.com/jakoes-wu/multi-claude/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.8%2B-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+在一台机器上同时使用多个 [Claude Code](https://code.claude.com/docs) 账号。每个账号有自己的登录、设置和历史记录，还可以有自己的代理，不用再反复退出、重新登录。
+
+```sh
+claude-work        # 用工作账号运行 Claude Code
+claude-personal    # 在另一个终端里，同时用个人账号运行
+multi-claude       # 查看你的账号、登录状态和用量
+```
+
+![multi-claude 演示：新增两个账号并查看](https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/docs/assets/demo.gif)
+
+<sub>演示中的账号均为示例。</sub>
+
+## 工作原理
 
 Claude Code 把设置、登录和历史记录放在 `CLAUDE_CONFIG_DIR` 指定的目录里（默认 `~/.claude`），官方文档给出的多账号做法就是“每个账号一个目录”。multi-claude 替你管理这些目录，并为每个账号生成独立的启动命令，可以分别设置代理、额外环境变量和固定参数：
 
@@ -13,6 +30,8 @@ claude-main       -> 原来的 ~/.claude 账号，登录不失效
 claude            -> 行为不变
 ```
 
+启动命令是普通的 shell 脚本，即使卸载了 multi-claude 也能继续使用。
+
 ## 功能
 
 - **迁移默认账号**：把已有的 `~/.claude` 移进账号根目录，登录不失效，直接运行 `claude` 的行为与之前完全一致。
@@ -20,7 +39,7 @@ claude            -> 行为不变
 - **每个账号单独设置代理**：本地端口、HTTP(S) 代理地址、`off` 或 `inherit`。
 - **额外环境变量与固定参数**：全局默认值加账号级设置，例如 `--settings`、`--permission-mode`。
 - **一键部署**：`install.sh --config accounts.json` 装好工具并创建文件里的全部账号。
-- **幂等**：所有命令都可以放心重复执行。已是目标状态的报 `unchanged`；与不归 multi-claude 管理的文件冲突时只报告、不做任何修改；迁移中断后重跑会从实际状态继续。
+- **幂等**：所有命令都可以放心重复执行。写命令只输出有变化的项（加 `--verbose` 列出全部）；与不归 multi-claude 管理的文件冲突时只报告、不做任何修改；迁移中断后重跑会从实际状态继续。
 - **可选的共享资源**：把一个共享目录里的 `CLAUDE.md`、`skills`、`agents`、`commands` 软链到指定账号。
 - **不碰凭据**：multi-claude 从不读取、复制或删除登录信息，唯一的钥匙串操作只查询条目是否存在。
 
@@ -58,13 +77,35 @@ curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install
 
 ## 快速开始
 
+### 1. 每个登录建一个账号
+
 ```sh
 multi-claude add work --proxy 7901   # 新建账号 work 及其启动命令，走本地 7901 端口代理
-multi-claude login work              # 登录这个账号
-claude-work                          # 用这个账号启动 Claude Code
-
-multi-claude                         # 查看你的账号
+multi-claude add personal            # 再建一个，沿用 shell 的代理设置
 ```
+
+### 2. 每个账号登录一次
+
+```sh
+multi-claude login work              # 以该账号的身份运行 `claude auth login`
+multi-claude login personal
+```
+
+### 3. 用启动命令代替 `claude`
+
+```sh
+claude-work                          # 在一个终端里
+claude-personal                      # 在另一个终端里，同时运行
+```
+
+### 4. 检查一切是否正常
+
+```sh
+multi-claude                         # 账号、登录、用量，以及有没有问题
+multi-claude doctor                  # 完整检查，每个问题都给出修复方法
+```
+
+### 已经在用 Claude Code？
 
 已有的 `~/.claude` 不会被改动，直接运行 `claude` 照常使用它。想把它也作为账号管理，见[迁移 `~/.claude`](#迁移-claude)（可选；需在关闭所有 Claude 会话后、在普通终端里运行）。
 
@@ -249,6 +290,32 @@ multi-claude remove main         # 注销账号
 其它都不用改：登录和 `~/.claude.json` 从未被动过。复制模式下用了 `--keep-backup` 时，原目录保留在 `~/.claude.multi-claude-bak.<时间戳>`。
 
 迁移报错停下、想放弃时：报错信息会写明完整数据在哪里，把它移回 `~/.claude`，再删除 `~/.config/multi-claude/migrate-journal.json`。
+
+## 常见问题
+
+### 怎么升级 multi-claude？
+
+重新运行安装脚本：`curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install.sh | sh`，或在更新后的克隆目录里运行 `./install.sh`。它只替换工具本身，配置、账号和启动命令都保留。新版本改变了启动命令的内容时，`multi-claude doctor` 会报告启动命令已过期，运行 `multi-claude apply` 即可重写。
+
+### 直接运行 `claude` 用的是哪个账号？
+
+和以前一样，用 `~/.claude`：multi-claude 不会改变它。[迁移 `~/.claude`](#迁移-claude) 之后就是迁移出来的那个账号。想按目录自动选账号，用 `claude-auto`，见[按目录选账号](#按目录选账号)。
+
+### 怎么把对话交给另一个账号继续？
+
+在 Claude 会话里运行 `! multi-claude handoff 另一个账号`，再在新终端里运行它打印出的命令。见[把会话交给另一个账号](#把会话交给另一个账号)。
+
+### 为什么 `usage` 显示的数字是旧的？
+
+默认情况下，数字来自 Claude Code 写在 `.claude.json` 里的缓存，可能已经过了好几个小时。运行 `multi-claude statusline install 文件` 后，每个新会话都会从状态栏记录最新的数字，见[用量](#用量)。
+
+### 怎么让所有账号共用 skills 和 `CLAUDE.md`？
+
+`multi-claude set 名称 --shared` 会从 `~/.claude-shared`（或你设置的共享目录）链接过来。见[共享资源](#共享资源)。
+
+### multi-claude 会读取或复制我的登录信息吗？
+
+不会。它从不读取、复制或删除凭据，唯一的钥匙串操作只查询条目是否存在。macOS 上登录与账号目录的路径绑定，所以 `rename` 不会改动目录。
 
 ## 参考
 
