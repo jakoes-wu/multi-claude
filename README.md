@@ -49,11 +49,31 @@ The launchers are plain shell scripts. They keep working even if you uninstall m
 - **Idempotent** — every command can be re-run safely. Write commands print only what changes (`--verbose` lists everything); conflicts with files multi-claude does not own are reported without changing anything; an interrupted migration resumes where it stopped.
 - **Optional shared resources** — link `CLAUDE.md`, `skills`, `agents` and `commands` from one shared directory into selected accounts.
 
-## Requirements
+## Prerequisites
 
-- macOS or Linux (Windows is planned; inside WSL, use the Linux instructions)
-- Python 3.8 or newer (standard library only)
-- Claude Code (`claude`) on your `PATH`
+**Servers.** None. multi-claude runs only on your own computer and never connects to the network.
+
+**Your computer.**
+
+| | Needed | Optional |
+| ---- | ---- | ---- |
+| Operating system | macOS or Linux (WSL counts as Linux) | — |
+| Tools | Python 3.8+ (`python3`, standard library only); Claude Code (`claude`); `curl` or `wget`, and `tar`, for the installer | `pipx` or Homebrew, to install from PyPI or the tap; `lsof`, so that `migrate-default` and `restore` can find processes using `~/.claude` (Linux falls back to `/proc`); VS Code's `code` command, for `multi-claude code` |
+
+Install what is missing:
+
+```sh
+# macOS (with Homebrew, https://brew.sh); curl, tar and lsof come with macOS
+brew install python
+curl -fsSL https://claude.ai/install.sh | bash    # Claude Code, if you do not have it yet
+
+# Debian / Ubuntu / WSL
+sudo apt update
+sudo apt install -y python3 curl tar lsof
+curl -fsSL https://claude.ai/install.sh | bash    # Claude Code, if you do not have it yet
+```
+
+Windows itself is not supported yet; use WSL. Other ways to install Claude Code: https://code.claude.com/docs/en/setup
 
 ## Installation
 

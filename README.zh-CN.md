@@ -49,11 +49,31 @@ claude            -> 行为不变
 - **幂等**：所有命令都可以放心重复执行。写命令只输出有变化的项（加 `--verbose` 列出全部）；与不归 multi-claude 管理的文件冲突时只报告、不做任何修改；迁移中断后重跑会从实际状态继续。
 - **可选的共享资源**：把一个共享目录里的 `CLAUDE.md`、`skills`、`agents`、`commands` 软链到指定账号。
 
-## 运行要求
+## 前置条件
 
-- macOS 或 Linux（Windows 在计划中；WSL 内按 Linux 使用）
-- Python 3.8 及以上（只用标准库）
-- `PATH` 中有 Claude Code（`claude`）
+**服务器**：不需要。multi-claude 只在你自己的电脑上运行，不联网。
+
+**你的电脑**：
+
+| | 必需 | 可选 |
+| ---- | ---- | ---- |
+| 操作系统 | macOS 或 Linux（WSL 按 Linux 算） | 无 |
+| 工具 | Python 3.8+（`python3`，只用标准库）；Claude Code（`claude`）；安装脚本需要 `curl` 或 `wget`，以及 `tar` | `pipx` 或 Homebrew：从 PyPI 或 tap 安装时用；`lsof`：`migrate-default` 和 `restore` 用它查找占用 `~/.claude` 的进程（Linux 上没有时改读 `/proc`）；VS Code 的 `code` 命令：`multi-claude code` 时用 |
+
+缺什么装什么：
+
+```sh
+# macOS（需要 Homebrew，https://brew.sh）；curl、tar、lsof 系统自带
+brew install python
+curl -fsSL https://claude.ai/install.sh | bash    # 还没装 Claude Code 时
+
+# Debian / Ubuntu / WSL
+sudo apt update
+sudo apt install -y python3 curl tar lsof
+curl -fsSL https://claude.ai/install.sh | bash    # 还没装 Claude Code 时
+```
+
+暂不支持 Windows 原生运行，请用 WSL。Claude Code 的其它安装方式：https://code.claude.com/docs/en/setup
 
 ## 安装
 

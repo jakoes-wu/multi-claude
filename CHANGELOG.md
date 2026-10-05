@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- README: a Prerequisites section (no server needed; required and optional
+  tools; one-line install commands for macOS and Debian / Ubuntu / WSL)
+  replaces Requirements.
+
 ## [0.8.0] - 2026-10-03
 
 ### Added
