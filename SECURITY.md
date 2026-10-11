@@ -13,10 +13,20 @@ steps to reproduce. You should receive a reply within a week.
 
 ## Scope notes
 
-- multi-claude never reads, writes, copies or deletes Claude Code credentials
-  (keychain items or `.credentials.json`). Its only keychain call is
-  `security find-generic-password -a <user> -s <service>` without `-w` or
-  `-g`, which checks whether an item exists and never prints its secret.
+- multi-claude never writes, copies, refreshes or deletes Claude Code
+  credentials (keychain items or `.credentials.json`).
+- One command reads a credential: `multi-claude list` reads each account's
+  OAuth access token (`security find-generic-password -a <user> -w -s
+  <service>` on macOS, `.credentials.json` elsewhere) and sends it in one
+  `GET https://api.anthropic.com/api/oauth/profile` request to look up the
+  account's plan. The token is kept in memory only, is never logged or
+  printed, goes to no other host, and travels through the account's
+  configured proxy; a failing proxy is never bypassed. Expired tokens are not
+  sent. `list --offline` and `list --names` read no token and make no
+  request.
+- Every other command only checks whether a login exists
+  (`security find-generic-password -a <user> -s <service>` without `-w` or
+  `-g`) and makes no network connection.
 - Credential-like environment variables (API keys, tokens, secrets,
   passwords) are rejected by `multi-claude env`, because launchers and
   `config.json` are plain files.

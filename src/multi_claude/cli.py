@@ -19,8 +19,8 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
 from . import (__version__, accounts, bundle, completion, doctor, history, hook, identity, launcher, migrate,
-               platform, restore, routes, sessions, shellpath, statusline, usage)
-from .actions import error, info, warn
+               plan, platform, restore, routes, sessions, shellpath, statusline, usage)
+from .actions import LOG_PREFIX, error, info, warn
 from .config import (DEFAULT_SHARED_DIR, DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError, RouteRule,
                      is_unshareable, load_config, normalize_proxy, parse_config, validate_env_key, validate_name,
                      validate_route_path, validate_value, config_path)
@@ -166,12 +166,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_apply.add_argument("-f", "--file", help="use this file as the new configuration")
     _add_write_options(p_apply)
 
-    p_list = sub.add_parser("list", description="show accounts and their status")
+    p_list = sub.add_parser("list", description="show accounts and their status; looks up each account's plan "
+                            "and billing channel from Anthropic unless --offline is given")
     list_mode = p_list.add_mutually_exclusive_group()
     list_mode.add_argument("--verbose", action="store_true",
                            help="show every field, the global settings and the keychain details")
     list_mode.add_argument("--json", action="store_true", help="print machine-readable JSON (includes usage)")
     list_mode.add_argument("--names", action="store_true", help="print only the account names, one per line")
+    p_list.add_argument("--offline", action="store_true",
+                        help="skip the plan lookup: do not read access tokens and do not connect to the network")
 
     p_usage = sub.add_parser("usage", description="show the last known 5-hour and 7-day usage of each account "
                                            "(from Claude Code's own cache; never reads credentials)")
@@ -397,7 +400,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             warn(notice)
         # list 与 usage 只读：不加写锁，迁移未完成时也放行。
         if args.command == "list":
-            return cmd_list(verbose=args.verbose, as_json=args.json, names_only=args.names)
+            return cmd_list(verbose=args.verbose, as_json=args.json, names_only=args.names, offline=args.offline)
         if args.command == "usage":
             if args.history:
                 return cmd_usage_history(args.name, args.days, args.by or "day", args.json)
@@ -979,7 +982,7 @@ _EMAIL_LIKE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 def cmd_login(name: str, claude_args: List[str]) -> int:
     """以账号的身份环境运行 `claude auth login …`（方案 feature-easier-onboarding §5.1.4）。
 
-    凭据由 Claude 自己写入该账号的钥匙串条目或凭据文件，本工具不读写凭据。
+    凭据由 Claude 自己写入该账号的钥匙串条目或凭据文件，本命令不读写凭据。
     不带账号的固定参数：取多个值的选项会把 `auth login` 当成自己的值吞掉（同 mcp）。
     """
     process_env, code = _account_process_env(name)
@@ -1260,7 +1263,8 @@ def _checked_proxy(value: str) -> str:
         raise UsageError(str(exc))
 
 
-def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = False) -> int:
+def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = False, offline: bool = False) -> int:
+    """列出账号。除 --names 与 --offline 外，会读各账号的访问令牌并向服务端查询套餐（方案 feature-live-plan）。"""
     config, exists = load_config()
     if names_only:
         # 给补全脚本用：只输出名称，不输出任何告警。
@@ -1271,9 +1275,12 @@ def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = Fa
     for variable in _UNMANAGED_PROXY_VARS:
         if variable in os.environ:
             warn("{} is set; launchers do not change it, even with proxy off".format(variable))
+    # 套餐只查一次，表格与 JSON 共用；None 表示本次不查（--offline 或还没有配置）。
+    plans = None if offline or not exists else plan.query_all(config, os.environ, datetime.now(timezone.utc))
     if as_json:
-        _print_json(_list_data(config, exists))
+        _print_json(_list_data(config, exists, plans))
         if exists:
+            _report_plan_problems(plans)
             accounts.warn_launch_settings(config, None, note_invalid=True)
         return accounts.EXIT_OK
     if not exists:
@@ -1281,7 +1288,7 @@ def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = Fa
             os.path.join(platform.state_dir(), "config.json")))
         return accounts.EXIT_OK
     if not verbose:
-        return _print_brief_list(config)
+        return _print_brief_list(config, plans)
     print("root: {}".format(expand(config.root)))
     print("bin_dir: {}".format(expand(config.bin_dir)))
     print("shared.dir: {}".format(expand(config.shared_dir) if config.shared_dir else "(not set)"))
@@ -1290,15 +1297,15 @@ def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = Fa
         return accounts.EXIT_OK
     if "CLAUDE_CODE_CUSTOM_OAUTH_URL" in os.environ:
         warn("CLAUDE_CODE_CUSTOM_OAUTH_URL is set; LOGIN assumes the production service and may be wrong")
-    rows = [("NAME", "IDENTITY", "DIR", "PROXY", "SHARED", "LAUNCHER", "LOGIN", "LINK")]
+    rows = [("NAME", "IDENTITY", "DIR", "PROXY", "SHARED", "LAUNCHER", "LOGIN") + _plan_header(plans) + ("LINK",)]
     details = []
     default_account = None
     for entry in _account_entries(config):
         if entry["identity"] == IDENTITY_DEFAULT:
             default_account = entry["name"]
         rows.append((entry["name"], entry["identity"], "ok" if entry["dir_exists"] else "missing-dir",
-                     entry["proxy"], _shared_cell(entry), entry["launcher"], entry["login"],
-                     entry["link"] or "-"))
+                     entry["proxy"], _shared_cell(entry), entry["launcher"], entry["login"])
+                    + _plan_cells(plans, entry["name"]) + (entry["link"] or "-",))
         if verbose:
             details.append("  {}: keychain service {!r}, credentials file {}".format(
                 entry["name"], entry["keychain_service"], entry["credentials_file"]))
@@ -1309,11 +1316,43 @@ def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = Fa
             default_account, os.path.join(os.path.expanduser("~"), ".claude.json")))
     for line in details:
         print(line)
+    _report_plan_problems(plans)
     accounts.warn_launch_settings(config, None, note_invalid=True)
     return accounts.EXIT_OK
 
 
-def _print_brief_list(config: Config) -> int:
+_PLAN_HEADER = ("PLAN", "BILLING")
+
+
+def _plan_header(plans: Optional[dict]) -> tuple:
+    """--offline 时不加这两列，表格与改动前完全相同。"""
+    return () if plans is None else _PLAN_HEADER
+
+
+def _plan_cells(plans: Optional[dict], name: str) -> tuple:
+    if plans is None:
+        return ()
+    return (plan.plan_cell(plans[name]), plan.billing_cell(plans[name]))
+
+
+def _report_plan_problems(plans: Optional[dict]) -> None:
+    """套餐查询的失败与过期提示，打到 stderr；不影响表格、STATUS 列与退出码。"""
+    if plans is None:
+        return
+    expired = []
+    for name, result in plans.items():
+        if result.status == plan.STATUS_ERROR:
+            warn(plan.failure_text(name, result))
+        elif result.status == plan.STATUS_EXPIRED:
+            expired.append(name)
+    if expired:
+        # multi-claude 不刷新令牌：让 Claude Code 自己续期，再查一次即可。
+        # 走 stderr 而不是 info()：info() 写 stdout，会混进 --json 的输出。
+        print("{} expired: start {} once to renew the login, then run list again".format(
+            LOG_PREFIX, ", ".join("claude-" + name for name in expired)), file=sys.stderr)
+
+
+def _print_brief_list(config: Config, plans: Optional[dict] = None) -> int:
     """list 的默认输出：只放新用户关心的列（方案 feature-clearer-help §5.1.2）；完整信息见 --verbose。"""
     if not config.accounts:
         print("no accounts registered; run `multi-claude add NAME` to start")
@@ -1322,19 +1361,21 @@ def _print_brief_list(config: Config) -> int:
         # 与完整输出相同：LOGIN 与由它得出的 STATUS 都按正式服务探测，这时可能不准。
         warn("CLAUDE_CODE_CUSTOM_OAUTH_URL is set; LOGIN assumes the production service and may be wrong")
     now = datetime.now(timezone.utc)
-    rows = [("NAME", "LOGIN", "PROXY", "SHARED", "5H", "7D", "LAST USED", "STATUS")]
+    rows = [("NAME", "LOGIN") + _plan_header(plans) + ("PROXY", "SHARED", "5H", "7D", "LAST USED", "STATUS")]
     has_problem = False
     for entry in _account_entries(config):
         report = usage.read_account_usage(config, config.find(entry["name"]), now)
         status = _status_cell(entry)
         has_problem = has_problem or status != "ok"
-        rows.append((entry["name"], entry["login"], entry["proxy"], _shared_cell(entry),
-                     _window_cell(report.five_hour, now), _window_cell(report.seven_day, now),
-                     _last_used_cell(entry["last_used"], now), status))
+        rows.append((entry["name"], entry["login"]) + _plan_cells(plans, entry["name"])
+                    + (entry["proxy"], _shared_cell(entry),
+                       _window_cell(report.five_hour, now), _window_cell(report.seven_day, now),
+                       _last_used_cell(entry["last_used"], now), status))
     _print_table(rows)
     _print_routes(config)
     if has_problem:
         print("run multi-claude doctor for details")
+    _report_plan_problems(plans)
     accounts.warn_launch_settings(config, None, note_invalid=True)
     return accounts.EXIT_OK
 
@@ -1377,7 +1418,7 @@ def _shared_cell(entry: dict) -> str:
     return "yes"
 
 
-def _account_entries(config: Config, with_usage: bool = False) -> List[dict]:
+def _account_entries(config: Config, with_usage: bool = False, plans: Optional[dict] = None) -> List[dict]:
     """list 的表格与 JSON 共用的每账号数据；表格的列取自这里，保证两种输出口径一致。"""
     now = datetime.now(timezone.utc)
     entries = []
@@ -1402,11 +1443,14 @@ def _account_entries(config: Config, with_usage: bool = False) -> List[dict]:
         }
         if with_usage:
             entry["usage"] = usage.report_to_dict(usage.read_account_usage(config, account, now), now)
+        if plans is not None:
+            # 本次没查套餐（--offline）时不加这个键，JSON 与改动前相同
+            entry["plan"] = plan.to_dict(plans[name])
         entries.append(entry)
     return entries
 
 
-def _list_data(config: Config, exists: bool) -> dict:
+def _list_data(config: Config, exists: bool, plans: Optional[dict] = None) -> dict:
     if not exists:
         return {"schema_version": 1, "configured": False, "accounts": [],
                 "routes": {"default": None, "rules": []}}
@@ -1416,7 +1460,7 @@ def _list_data(config: Config, exists: bool) -> dict:
         "root": expand(config.root),
         "bin_dir": expand(config.bin_dir),
         "shared_dir": expand(config.shared_dir) if config.shared_dir else None,
-        "accounts": _account_entries(config, with_usage=True),
+        "accounts": _account_entries(config, with_usage=True, plans=plans),
         "routes": {"default": config.route_default,
                    "rules": [{"path": rule.path, "account": rule.account, "exists": os.path.isdir(expand(rule.path))}
                              for rule in config.route_rules]},
@@ -1463,7 +1507,7 @@ def cmd_usage(name: Optional[str], as_json: bool) -> int:
     for row in rows:
         print("  ".join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip())
     print("Values come from Claude Code's own cache (.claude.json) or the statusline hook, and may be out of date; "
-          "multi-claude never reads credentials.")
+          "this command never reads credentials.")
     return accounts.EXIT_OK
 
 
@@ -1555,7 +1599,7 @@ def cmd_usage_history(name: Optional[str], days: Optional[int], by: str, as_json
     if len(per_account) > 1:
         _print_history_block("TOTAL (each reply counted once)", total, by, days)
     print("Counted from the session files on this machine (not other machines, not deleted sessions); "
-          "multi-claude reads only the token counts, never connects to the network and never reads credentials.")
+          "this command reads only the token counts, never connects to the network and never reads credentials.")
     return accounts.EXIT_OK
 
 

@@ -364,6 +364,8 @@ default 身份账号不受本节约束：它的绑定条件是“不设变量”
 - `credentials_file(account_dir)` → `<account_dir>/.credentials.json`；
 - `probe(identity, account_dir)` → `keychain`（macOS 上条目存在）、`file`（凭据文件存在）、`none`、`unknown`（查询本身失败）。
 
+> 2026-10-11 注记：`list` 为实时查询套餐新增了读取访问令牌的入口 `identity.read_oauth_token()`（带 `-w`），见 `docs/feature/feature-live-plan.md`；本节描述的 `probe()` 不变。
+
 macOS 的查询命令固定为 `security find-generic-password -a <keychain_account()> -s <服务名>`（与 Claude 的查询条件一致），**不带 `-w`、`-g`**，只看退出码（0 = 存在，44 = 不存在，其它 = unknown），stdout 与 stderr 丢弃。代码中只有这一处调用 `security`，并有单元测试断言假 `security` 收到的参数（§8）。`security` 通过 `PATH` 查找，测试用假脚本替换。
 
 用途：
