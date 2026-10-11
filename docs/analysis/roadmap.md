@@ -88,6 +88,12 @@
 | 不含凭据的配置包 | `export` / `import`：白名单条目 + `mcpServers`；冲突默认拒绝，`--force` 先备份 | `feature-config-bundle.md` | v0.8.0（PR #34） |
 | 共用 MCP、插件、设置 | README 写法：`--mcp-config`、`--settings`、`CLAUDE_CODE_PLUGIN_CACHE_DIR` | 同上 | v0.8.0（PR #34） |
 
+### 2.9 套餐与付款渠道（v0.9.0）
+
+| 项 | 实现 | 设计文档 | 发布 |
+| ---- | ---- | ---- | ---- |
+| list 的 PLAN、BILLING 两列 | 用各账号的访问令牌向服务端实时查询，走该账号的代理；`list --offline` 不查 | `feature-live-plan.md` | v0.9.0（PR #37） |
+
 ## 3. 待定（未排期）
 
 - `use NAME`（切换 `~/.claude` 指向的账号）：**不做**（用户 2026-10-03 决定）。直接运行 `claude` 时钥匙串登录（macOS）、`~/.claude.json` 与 default 账号启动命令的指向检查都不跟着 `~/.claude` 走，切换后会混用两个账号的状态；改用各账号的启动命令，或 `route --default NAME` 加 `claude-auto`。见 `feature-everyday-commands.md` §6、§10。
