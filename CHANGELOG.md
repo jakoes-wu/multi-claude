@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `list` shows two new columns, `PLAN` (for example `pro`, `max (5x)`) and
+  `BILLING` (the payment channel: `stripe`, `apple`, `google-play`, …). They
+  are looked up live from Anthropic with each account's own access token,
+  through that account's proxy; `list --json` carries them in a `plan` object.
+  `list --offline` skips the lookup and prints the previous output.
+
+### Security
+
+- `list` now reads each account's access token and makes one request per
+  account to `api.anthropic.com`. Until now multi-claude never read credentials and never
+  connected to the network; every other command still does neither. Tokens are
+  never written, refreshed, logged or sent anywhere else.
+
 ### Changed
 
 - README: a Prerequisites section (no server needed; required and optional

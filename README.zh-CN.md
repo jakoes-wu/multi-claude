@@ -10,7 +10,7 @@
 
 在一台机器上同时使用多个 [Claude Code](https://code.claude.com/docs) 账号。每个账号有自己的登录、设置和历史记录，还可以有自己的代理，不用再反复退出、重新登录。
 
-它从不读取你的登录信息，不联网，也不改你的 shell 配置文件。
+它从不修改或复制你的登录信息，也不改你的 shell 配置文件。只有 `list` 会读取账号的访问令牌并联网，向 Anthropic 查询当前套餐；`list --offline` 不查。
 
 ```sh
 claude-work        # 用工作账号运行 Claude Code
@@ -37,8 +37,8 @@ claude            -> 行为不变
 
 ## 功能
 
-- **不读取登录信息**：唯一的钥匙串操作只查询条目是否存在，从不打开钥匙串条目或 `.credentials.json` 的内容。`migrate-default` 和 `restore` 会整体搬动账号目录，Linux 上凭据文件随目录一起移动，内容不会被打开。
-- **不联网**：multi-claude 本身不发起任何网络连接，没有统计上报，也不检查更新。只有安装脚本、pipx 或 Homebrew 会下载安装包。
+- **登录信息只属于你**：从不写入、复制、导出或刷新登录信息。只有一个命令会读取它：`list` 取各账号的访问令牌（macOS 在钥匙串，Linux 在 `.credentials.json`），向 Anthropic 查询该账号的套餐。令牌只留在内存里，只发往 `api.anthropic.com`，并且走该账号自己的代理。`list --offline` 什么都不读。其余命令只查询登录是否存在。`migrate-default` 和 `restore` 会整体搬动账号目录，Linux 上凭据文件随目录一起移动，内容不会被打开。
+- **只有一种联网**：`list` 的套餐查询（每个账号一次请求）是 multi-claude 唯一的网络连接，没有统计上报，也不检查更新；`list --offline` 完全不联网。只有安装脚本、pipx 或 Homebrew 会下载安装包。
 - **不改你的 shell**：需要修改 `PATH` 时，只打印要加的那一行，不会改 `~/.zshrc` 或 `~/.bashrc`。
 - **只改你要它改的**：它只写自己的配置与状态文件、启动命令、账号目录（包括 `code` 放在 `<root>/.apps` 里的 VS Code 数据）和共享软链。Claude Code 的设置文件只在两种情况下被修改：`statusline install`（你指定的文件，会先备份）和 `add --config-from`（新账号的 `settings.json`）。
 - **迁移默认账号**：把已有的 `~/.claude` 移进账号根目录，登录不失效，直接运行 `claude` 的行为与之前完全一致。
@@ -51,7 +51,7 @@ claude            -> 行为不变
 
 ## 前置条件
 
-**服务器**：不需要。multi-claude 只在你自己的电脑上运行，不联网。
+**服务器**：不需要。multi-claude 只在你自己的电脑上运行；唯一的网络请求是 `list` 向 Anthropic 查询套餐。
 
 **你的电脑**：
 
@@ -254,7 +254,7 @@ work   23% 14:00  41% Fri  12m ago
 home   -          -        no data (start claude-home once)
 ```
 
-数值是 Claude Code 自己缓存在该账号 `.claude.json`（default 身份为 `~/.claude.json`）里的最近一次结果。multi-claude 不读凭据、不联网，所以数据可能已经过时：`UPDATED` 显示数据年龄，超过一小时标注 `stale`。这份缓存由 Claude Code 自己写入，何时刷新未见官方说明。已过重置时间的窗口显示 `reset`。
+数值是 Claude Code 自己缓存在该账号 `.claude.json`（default 身份为 `~/.claude.json`）里的最近一次结果。`usage` 不读凭据、不联网，所以数据可能已经过时：`UPDATED` 显示数据年龄，超过一小时标注 `stale`。这份缓存由 Claude Code 自己写入，何时刷新未见官方说明。已过重置时间的窗口显示 `reset`。
 
 想要更新的数值，可以让状态栏顺带记录。Claude Code 每次重绘状态栏时，会把 5 小时与 7 天用量交给 `statusLine` 命令（仅 Pro / Max，且会话收到第一次回复之后才有）。包装实际生效的那份设置文件里的 `statusLine` 命令：
 
@@ -285,6 +285,22 @@ work:
 `--history` 统计本机上该账号会话记录（`projects/**/*.jsonl`，含子代理）里的回复：按天（本地时间）或按模型汇总输入、输出、缓存读、缓存写 token。只读这几项计数，对话里的其它内容既不输出也不保存，也不发往任何地方。其它机器上的会话和已删除的会话不计入。用 `handoff` 复制过的会话在两个账号里都会出现，`TOTAL` 一段里每条回复只算一次。`--json` 输出同样的数字，供脚本使用。
 
 `list` 会显示每个账号最近一次使用的时间（`LAST USED`），取自账号目录里最新的会话文件或输入历史；`handoff` 复制到某个账号也算一次使用。
+
+#### 套餐与付款渠道
+
+```text
+NAME   LOGIN     PLAN      BILLING      PROXY                  SHARED  5H         7D       LAST USED  STATUS
+work   keychain  max (5x)  stripe       http://127.0.0.1:7890  no      23% 14:00  41% Fri  5m ago     ok
+home   keychain  pro       apple        inherit                no      -          -        2d ago     ok
+old    keychain  expired   -            inherit                no      -          -        9d ago     ok
+```
+
+`PLAN` 和 `BILLING` 不是缓存：每次运行 `list` 都用账号自己的访问令牌向 Anthropic 查询（`GET https://api.anthropic.com/api/oauth/profile`，与 Claude Code 自己发的请求相同）。`PLAN` 是订阅的套餐：`pro`、`max (5x)`、`max (20x)`、`team`、`enterprise`。`BILLING` 是付款渠道：`stripe`（claude.ai 官网）、`apple`（App Store）、`google-play`、`aws-marketplace` 等。
+
+- 请求按该账号的代理设置发出，与它的启动命令一致：配置了地址就走该代理，`inherit` 用当前 shell 的代理变量，`off` 不用代理。配置了代理而代理不通时，查询直接失败，不会改走直连。查询只支持 `http://` 代理。
+- `expired` 表示访问令牌已过期。令牌只有几小时有效期，multi-claude 不会刷新它（刷新会与正在运行的会话冲突）：启动一次 `claude-名称`，再运行 `list` 即可。`-` 表示该账号没有 OAuth 登录，`rejected` 表示服务端拒绝了这个令牌。
+- `error` 的原因打印在 stderr，例如 `plan lookup failed for work: timeout (via 127.0.0.1:7890, 10.01s)`。`tls_failed` 通常是运行 multi-claude 的 Python 没有根证书（python.org 的安装包带有 `Install Certificates.command`）。
+- `list --offline` 跳过查询：不读令牌、不发请求，表格里没有这两列。`list --json` 在每个账号的 `plan` 对象里给出同样的数据，脚本应读它而不是解析表格。查询通常多花一秒左右，最多 15 秒。
 
 ### 把会话交给另一个账号
 
@@ -420,7 +436,7 @@ multi-claude remove main         # 注销账号
 
 ### multi-claude 会读取或复制我的登录信息吗？
 
-不会读取：唯一的钥匙串操作只查询条目是否存在，也从不打开 `.credentials.json`。它不导出、不上传、不备份登录信息。`migrate-default` 和 `restore` 会整体搬动账号目录；Linux 上凭据文件就在目录里，会随目录一起移动（复制模式下随整个目录一起复制、校验，然后删除原目录，除非加了 `--keep-backup`），内容同样不会被打开。macOS 上登录与账号目录的路径绑定，所以 `rename` 不会改动目录。
+它从不写入、复制、导出、上传、刷新或备份登录信息。只有一个命令会读取它：`list` 取各账号的访问令牌，向 Anthropic 查询套餐（见[套餐与付款渠道](#套餐与付款渠道)）；令牌只留在内存里，只发往 `api.anthropic.com`。`list --offline` 不读取。其余命令只查询登录是否存在。`migrate-default` 和 `restore` 会整体搬动账号目录；Linux 上凭据文件就在目录里，会随目录一起移动（复制模式下随整个目录一起复制、校验，然后删除原目录，除非加了 `--keep-backup`），内容同样不会被打开。macOS 上登录与账号目录的路径绑定，所以 `rename` 不会改动目录。
 
 ## 参考
 
@@ -440,7 +456,7 @@ multi-claude remove main         # 注销账号
 | `multi-claude args (名称 \| --defaults) -- [参数 ...]` | 整体替换固定参数；`--` 后面为空表示清空 |
 | `multi-claude remove 名称` | 注销账号并删除其启动命令。**账号目录和登录都会保留** |
 | `multi-claude apply [-f 文件]` | 按配置（或 `文件`）收敛全部账号 |
-| `multi-claude list [--verbose \| --json \| --names]` | 列出账号、启动命令和登录状态；`--json` 额外包含用量，供脚本使用；`--names` 只输出名称 |
+| `multi-claude list [--verbose \| --json \| --names] [--offline]` | 列出账号、启动命令、登录状态，以及向 Anthropic 查询到的套餐与付款渠道；`--json` 额外包含用量，供脚本使用；`--names` 只输出名称；`--offline` 跳过套餐查询（不读令牌、不联网） |
 | `multi-claude usage [名称] [--json]` | 显示各账号最近一次已知的 5 小时 / 7 天用量 |
 | `multi-claude usage --history [名称] [--days N] [--by day\|model] [--json]` | 按天或按模型统计本机会话记录里的 token 用量（默认 7 天） |
 | `multi-claude doctor [--json] [--verbose]` | 检查配置、启动命令、账号目录、共享软链、登录与环境变量 |

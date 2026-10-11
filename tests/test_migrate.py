@@ -180,7 +180,7 @@ class DefaultLauncherTest(MigrateBase):
         self.assertNotIn("CLAUDE_SECURESTORAGE_CONFIG_DIR", env)
         self.assertEqual(env["HTTPS_PROXY"], "http://127.0.0.1:7901")
         listing = self.ok("list", "--verbose").out
-        self.assertRegex(listing, r"main\s+default\s+ok\s+\S+\s+no\s+ok\s+\S+\s+ok")
+        self.assertRegex(listing, r"main\s+default\s+ok\s+\S+\s+no\s+ok\s+\S+\s+-\s+-\s+ok")
         self.assertIn(os.path.join(self.home, ".claude.json"), listing)
 
     def test_broken_or_redirected_link(self):

@@ -30,10 +30,20 @@ exit "${FAKE_CLAUDE_RC:-0}"
 """
 
 # 每次调用把参数逐行追加到记录文件，以一行 `--` 分隔；退出码由 FAKE_SECURITY_RC 决定（默认 44 = 不存在）。
+# 带 -w（读出条目内容）且退出码为 0 时输出 FAKE_SECURITY_SECRET 指向的文件，未设置时输出 `{}`：
+# 真实的 security 在条目存在时一定有输出，`{}` 表示“条目在，但里面没有 OAuth 登录”。
 FAKE_SECURITY = """#!/bin/sh
 printf '%s\\n' "$@" >> "$FAKE_SECURITY_LOG"
 echo -- >> "$FAKE_SECURITY_LOG"
-exit "${FAKE_SECURITY_RC:-44}"
+rc="${FAKE_SECURITY_RC:-44}"
+if [ "$rc" = 0 ]; then
+  for arg in "$@"; do
+    if [ "$arg" = "-w" ]; then
+      if [ -n "${FAKE_SECURITY_SECRET:-}" ]; then cat "$FAKE_SECURITY_SECRET"; else echo '{}'; fi
+    fi
+  done
+fi
+exit "$rc"
 """
 
 SYSTEM_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
