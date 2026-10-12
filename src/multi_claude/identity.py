@@ -6,10 +6,13 @@ Claude Code 在 macOS 上把登录凭据存进钥匙串，服务名由配置目�
 
 - `probe()`：只查询凭据是否存在。钥匙串调用 `security find-generic-password -a <账户> -s <服务名>`，
   不带 -w / -g，只看退出码。
-- `read_oauth_token()`：读出访问令牌，供 `list` 向服务端查询套餐（plan.py 是唯一调用方）。
-  钥匙串调用带 -w 的同一条命令。令牌只留在内存里，不写入文件、日志或任何输出。
+- `read_oauth_token()` / `read_credentials()`：读出访问令牌或整份凭据，供 `list` 向服务端查询套餐
+  （调用方只有 plan.py 与 refresh.py）。钥匙串调用带 -w 的同一条命令。内容只留在内存里，
+  不写入日志或任何输出。
 
-任何情况下都不写入、复制或删除凭据。整个工具只有这两处调用 `security`，测试会断言它们收到的参数。
+唯一的写入是 `write_credentials()`：`list` 发现访问令牌过期、用刷新令牌换到新令牌后，把新令牌写回
+原来的位置（方案 feature-token-refresh；refresh.py 是唯一调用方）。除此之外不写入、不复制、不删除凭据。
+调用 `security` 的地方只有本模块，测试会断言它收到的参数。
 """
 
 import hashlib
@@ -24,6 +27,7 @@ import unicodedata
 from typing import NamedTuple, Optional, Tuple
 
 from .config import IDENTITY_DEFAULT
+from .fsutil import atomic_write
 
 SERVICE_BASE = "Claude Code-credentials"
 CREDENTIALS_FILE = ".credentials.json"
@@ -62,7 +66,8 @@ def keychain_account() -> str:
             user = pwd.getpwuid(os.getuid()).pw_name
         except KeyError:
             user = ""
-    if not _KEYCHAIN_ACCOUNT_PATTERN.match(user):
+    # fullmatch：`$` 会放过尾部换行，而账户名现在会拼进 `security -i` 的命令行
+    if not _KEYCHAIN_ACCOUNT_PATTERN.fullmatch(user):
         return "claude-code-user"
     return user
 
@@ -174,11 +179,22 @@ def _parse_credentials(state: str, text: Optional[str]) -> Tuple[str, Optional[O
         return TOKEN_UNREADABLE, None
     if not isinstance(data, dict):
         return TOKEN_UNREADABLE, None
-    oauth = data.get("claudeAiOauth")
-    access_token = oauth.get("accessToken") if isinstance(oauth, dict) else None
+    token = token_of(data)
+    return (TOKEN_OK, token) if token is not None else (TOKEN_NONE, None)
+
+
+def is_token(value: object) -> bool:
+    """value 是否是能放进 HTTP 请求头的令牌串。"""
     # fullmatch 而不是 match：`$` 会放过尾部换行
-    if not isinstance(access_token, str) or not _TOKEN_PATTERN.fullmatch(access_token):
-        return TOKEN_NONE, None
+    return isinstance(value, str) and _TOKEN_PATTERN.fullmatch(value) is not None
+
+
+def token_of(document: dict) -> Optional[OAuthToken]:
+    """从凭据 JSON 对象里取访问令牌；没有可用的访问令牌时返回 None。"""
+    oauth = document.get("claudeAiOauth")
+    access_token = oauth.get("accessToken") if isinstance(oauth, dict) else None
+    if not is_token(access_token):
+        return None
     expires_at = oauth.get("expiresAt")
     # bool 是 int 的子类，要先排除
     # JSON 里的 1e999 会解析成 inf，取整会抛异常：非有限值同样当作“没有过期时刻”
@@ -186,4 +202,84 @@ def _parse_credentials(state: str, text: Optional[str]) -> Tuple[str, Optional[O
     if isinstance(expires_at, bool) or not isinstance(expires_at, (int, float)) \
             or (isinstance(expires_at, float) and not math.isfinite(expires_at)):
         expires_at = None
-    return TOKEN_OK, OAuthToken(TOKEN_OK, access_token, None if expires_at is None else int(expires_at))
+    return OAuthToken(TOKEN_OK, access_token, None if expires_at is None else int(expires_at))
+
+
+class Credentials(NamedTuple):
+    state: str
+    # claudeAiOauth 是从哪里读到的：LOGIN_KEYCHAIN 或 LOGIN_FILE；state 不是 TOKEN_OK 时为空串
+    source: str
+    # 该来源的完整 JSON 对象（含 claudeAiOauth 以外的键，如 mcpOAuth）；写回时必须整份带上
+    document: Optional[dict]
+
+
+def read_credentials(identity: str, account_dir: str) -> Credentials:
+    """读出含 OAuth 登录的那份凭据，以及它的来源。来源顺序与 read_oauth_token() 相同。
+
+    与 read_oauth_token() 的区别：只要求有 claudeAiOauth 对象，不要求访问令牌可用，
+    因为刷新要处理的正是访问令牌已经失效的凭据。
+    """
+    sources = []
+    if sys.platform == "darwin":
+        sources.append((LOGIN_KEYCHAIN, _read_keychain_secret(service_name(identity, account_dir))))
+    sources.append((LOGIN_FILE, _read_credentials_file(credentials_file(account_dir))))
+    unreadable = False
+    for source, (state, text) in sources:
+        if text is None:
+            unreadable = unreadable or state == TOKEN_UNREADABLE
+            continue
+        try:
+            data = json.loads(text)
+        except ValueError:
+            data = None
+        if not isinstance(data, dict):
+            unreadable = True
+        elif isinstance(data.get("claudeAiOauth"), dict):
+            return Credentials(TOKEN_OK, source, data)
+    return Credentials(TOKEN_UNREADABLE if unreadable else TOKEN_NONE, "", None)
+
+
+# `security -i` 从 stdin 读一行命令的长度上限，取自 Claude Code；超过时它改用命令行参数，这里照做。
+_SECURITY_STDIN_LIMIT = 4032
+
+
+def write_credentials(identity: str, account_dir: str, source: str, document: dict) -> bool:
+    """把整份凭据写回 source 指定的位置，返回是否成功。全工具唯一写凭据的入口。
+
+    两种写法都是整体替换：钥匙串条目由 security 原子更新，文件用临时文件加 rename，
+    任何时刻被打断，凭据要么是旧的、要么是完整的新的。
+    调用方必须先确认 document 来自同一来源的最新读取结果，只改了令牌相关字段。
+    """
+    text = json.dumps(document, separators=(",", ":"))
+    if source == LOGIN_KEYCHAIN:
+        return _write_keychain_secret(service_name(identity, account_dir), text)
+    if source == LOGIN_FILE:
+        try:
+            # 凭据文件是软链时写到它指向的文件：直接替换会把软链换成普通文件，原文件反而没更新
+            atomic_write(os.path.realpath(credentials_file(account_dir)), text, 0o600)
+        except OSError:
+            return False
+        return True
+    return False
+
+
+def _write_keychain_secret(service: str, text: str) -> bool:
+    """与 Claude Code 写钥匙串的方式相同：内容转成十六进制，经 stdin 交给 `security -i`。
+
+    走 stdin 是为了不让内容出现在进程列表里。命令行超过上限时 security 读不完整，
+    只能改用参数（Claude Code 也是这样做的），这时十六进制内容在本机进程列表里短暂可见。
+    """
+    payload = text.encode("utf-8").hex()
+    account = keychain_account()
+    line = 'add-generic-password -U -a "{}" -s "{}" -X "{}"\n'.format(account, service, payload)
+    try:
+        if len(line) <= _SECURITY_STDIN_LIMIT:
+            proc = subprocess.run(["security", "-i"], input=line.encode("utf-8"),
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        else:
+            proc = subprocess.run(["security", "add-generic-password", "-U", "-a", account, "-s", service,
+                                   "-X", payload], stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0

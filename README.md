@@ -10,7 +10,7 @@
 
 Use several [Claude Code](https://code.claude.com/docs) accounts on one machine, at the same time. Each account keeps its own login, settings and history and, if you like, its own proxy. No more logging out and in again.
 
-It never changes or copies your login and never edits your shell startup files. Only `list` reads an account's access token and goes online, to ask Anthropic for the current plan; `list --offline` skips that.
+It never copies or exports your login and never edits your shell startup files. Only `list` reads an account's access token and goes online, to ask Anthropic for the current plan (renewing the token first if it has expired); `list --offline` skips all of that.
 
 ```sh
 claude-work        # Claude Code with your work account
@@ -37,8 +37,8 @@ The launchers are plain shell scripts. They keep working even if you uninstall m
 
 ## Features
 
-- **Your login stays yours** — logins are never written, copied, exported or refreshed. One command reads one: `list` takes each account's access token (from the keychain, or `.credentials.json` on Linux) to ask Anthropic which plan the account is on. The token stays in memory and goes only to `api.anthropic.com`, through that account's proxy. `list --offline` reads nothing. Every other command only checks whether a login exists. `migrate-default` and `restore` move whole account directories, and on Linux the credentials file moves with its directory without being opened.
-- **One kind of network request, nothing else** — the plan lookup of `list` (one request per account) is the only connection multi-claude makes: no telemetry, no usage reporting, no update checks. `list --offline` makes none. Only the installer, pipx or Homebrew download the package.
+- **Your login stays yours** — logins are never copied or exported. One command touches them: `list` takes each account's access token (from the keychain, or `.credentials.json` on Linux) to ask Anthropic which plan the account is on, and when that token has expired it renews it the way Claude Code does and saves the new one in the same place. Tokens stay in memory and go only to Anthropic (`api.anthropic.com`, and `platform.claude.com` for a renewal), through that account's proxy. `list --no-refresh` never writes, `list --offline` reads nothing. Every other command only checks whether a login exists. `migrate-default` and `restore` move whole account directories, and on Linux the credentials file moves with its directory without being opened.
+- **Only `list` goes online** — its plan lookup (one request per account, plus one to renew an expired token) is the only connection multi-claude makes: no telemetry, no usage reporting, no update checks. `list --offline` makes none. Only the installer, pipx or Homebrew download the package.
 - **Leaves your shell alone** — when `PATH` needs a change, it prints the line to add instead of editing `~/.zshrc` or `~/.bashrc`.
 - **Changes only what you ask** — it writes its own configuration and state, the launchers, account directories (including the VS Code data that `code` keeps in `<root>/.apps`) and shared links. A Claude Code settings file is changed only by `statusline install` (the file you name, with a backup) and `add --config-from` (the new account's `settings.json`).
 - **Migrate the default account** — move your existing `~/.claude` into the account root without logging out. `claude` keeps working exactly as before.
@@ -51,7 +51,7 @@ The launchers are plain shell scripts. They keep working even if you uninstall m
 
 ## Prerequisites
 
-**Servers.** None. multi-claude runs only on your own computer; its only network requests are the plan lookups of `list`, sent to Anthropic.
+**Servers.** None. multi-claude runs only on your own computer; its only network requests are the plan lookups and token renewals of `list`, sent to Anthropic.
 
 **Your computer.**
 
@@ -292,15 +292,17 @@ work:
 NAME   LOGIN     PLAN      BILLING      PROXY                  SHARED  5H         7D       LAST USED  STATUS
 work   keychain  max (5x)  stripe       http://127.0.0.1:7890  no      23% 14:00  41% Fri  5m ago     ok
 home   keychain  pro       apple        inherit                no      -          -        2d ago     ok
-old    keychain  expired   -            inherit                no      -          -        9d ago     ok
+old    keychain  token expired  -       inherit                no      -          -        9d ago     ok
 ```
 
 `PLAN` and `BILLING` are not cached values: every `list` asks Anthropic (`GET https://api.anthropic.com/api/oauth/profile`, the request Claude Code itself makes) with the account's own access token. `PLAN` is the subscription — `pro`, `max (5x)`, `max (20x)`, `team`, `enterprise`. `BILLING` is where the subscription is paid: `stripe` (claude.ai), `apple` (App Store), `google-play`, `aws-marketplace` and so on.
 
 - The request uses the account's proxy setting, exactly like its launcher: the configured proxy, the proxy variables of your shell for `inherit`, none for `off`. If a proxy is configured and fails, the lookup fails; it never falls back to a direct connection. Only `http://` proxies work for the lookup.
-- `expired` means the access token has run out. Tokens last a few hours and multi-claude never refreshes them (refreshing would compete with running sessions): start `claude-NAME` once and run `list` again. `-` means the account has no OAuth login, and `rejected` that the server refused the token.
+- Access tokens last a few hours. When one has expired, `list` renews it first: it takes the same lock as Claude Code (`.oauth_refresh.lock` in the account directory), posts the refresh token to `https://platform.claude.com/v1/oauth/token`, and saves the new tokens where the old ones were, keeping everything else in the login untouched. A running Claude session picks the new token up by itself. If another process has just renewed the token, `list` uses that result and writes nothing; if another process holds the lock, `list` does not wait and shows `token expired` this time. This follows what Claude Code 2.1.295 does; it is not a documented interface.
+- `token expired` means the access token has run out and could not be renewed; the subscription itself is not affected. The reason is on stderr (`token refresh failed for work: lock_busy`). Start `claude-NAME` once and run `list` again; when the reason is `refresh_rejected` or `no_refresh_token`, log in again with `multi-claude login NAME`. `list --no-refresh` never renews and never writes to a login.
+- `-` means the account has no OAuth login, and `rejected` that the server refused the token.
 - `error` comes with a reason on stderr, for example `plan lookup failed for work: timeout (via 127.0.0.1:7890, 10.01s)`. `tls_failed` usually means the Python that runs multi-claude has no root certificates (python.org installers ship an `Install Certificates.command`).
-- `list --offline` skips the lookup — no token is read, nothing is sent — and prints the table without the two columns. `list --json` carries the same data in each account's `plan` object; scripts should use it instead of parsing the table. The lookup adds about a second, at most 15.
+- `list --offline` skips the lookup — no token is read, nothing is sent — and prints the table without the two columns. `list --json` carries the same data in each account's `plan` object (`refresh` tells whether a token was renewed); scripts should use it instead of parsing the table. The lookup adds about a second, at most 15; a renewal that is under way is allowed to finish first (the first Ctrl-C only prints a notice), so that the new login is not lost.
 
 ### Handing a session over to another account
 
@@ -436,7 +438,7 @@ By default the numbers come from the cache that Claude Code writes in `.claude.j
 
 ### Does multi-claude read or copy my login?
 
-It never writes, copies, exports, uploads, refreshes or backs up a login. One command reads one: `list` takes each account's access token to ask Anthropic for the account's plan (see [Plan and billing](#plan-and-billing)); the token stays in memory and is sent only to `api.anthropic.com`. `list --offline` does not read it. All other commands only check whether a login exists. `migrate-default` and `restore` move a whole account directory; on Linux the credentials file is inside it and moves with it (in copy mode it is copied as part of the directory, verified, and the original directory is then removed unless you pass `--keep-backup`), still without being opened. On macOS a login is tied to the account directory's path, which is why `rename` keeps the directory.
+It never copies, exports, uploads or backs up a login. One command touches one: `list` takes each account's access token to ask Anthropic for the account's plan, and renews the token when it has expired, saving the new one where the old one was (see [Plan and billing](#plan-and-billing)). Tokens stay in memory and are sent only to Anthropic. `list --no-refresh` never writes and `list --offline` does not read. All other commands only check whether a login exists. `migrate-default` and `restore` move a whole account directory; on Linux the credentials file is inside it and moves with it (in copy mode it is copied as part of the directory, verified, and the original directory is then removed unless you pass `--keep-backup`), still without being opened. On macOS a login is tied to the account directory's path, which is why `rename` keeps the directory.
 
 ## Reference
 
@@ -456,7 +458,7 @@ It never writes, copies, exports, uploads, refreshes or backs up a login. One co
 | `multi-claude args (NAME \| --defaults) -- [ARG ...]` | Replace the fixed arguments; `--` with nothing after it clears them. |
 | `multi-claude remove NAME` | Unregister an account and delete its launcher. **The directory and the login are kept.** |
 | `multi-claude apply [-f FILE]` | Converge everything to the configuration (or to `FILE`). |
-| `multi-claude list [--verbose \| --json \| --names] [--offline]` | Show accounts, launchers, login state and the plan and billing channel looked up from Anthropic. `--json` adds usage and is meant for scripts; `--names` prints only the names; `--offline` skips the plan lookup (no token read, no network). |
+| `multi-claude list [--verbose \| --json \| --names] [--no-refresh] [--offline]` | Show accounts, launchers, login state and the plan and billing channel looked up from Anthropic. `--json` adds usage and is meant for scripts; `--names` prints only the names; `--no-refresh` does not renew expired access tokens (never writes to a login); `--offline` skips the plan lookup (no token read, no network). |
 | `multi-claude usage [NAME] [--json]` | Show the last known 5-hour and 7-day usage of each account. |
 | `multi-claude usage --history [NAME] [--days N] [--by day\|model] [--json]` | Token usage per day or model, counted from the session files on this machine (default: 7 days). |
 | `multi-claude doctor [--json] [--verbose]` | Check the configuration, launchers, account directories, shared links, logins and environment. |

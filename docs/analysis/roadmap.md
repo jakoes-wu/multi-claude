@@ -4,7 +4,7 @@
 
 ## 1. 原则
 
-- 不写、不复制、不导出、不刷新凭据（钥匙串条目、`.credentials.json`、OAuth 令牌）。唯一的读取是 `list` 用访问令牌向服务端查询套餐（2026-10-11 起，见 `docs/feature/feature-live-plan.md`；`list --offline` 不读）。
+- 不复制、不导出凭据（钥匙串条目、`.credentials.json`、OAuth 令牌）。唯一的读取是 `list` 用访问令牌向服务端查询套餐（2026-10-11 起，见 `docs/feature/feature-live-plan.md`；`list --offline` 不读）；唯一的写入是 `list` 在访问令牌过期时刷新并写回（见 `docs/feature/feature-token-refresh.md`；`list --no-refresh` 不写）。
 - 不写 Claude Code 自己管理的文件（`.claude.json`、钥匙串）。需要改变 Claude 的行为时，优先用启动参数和环境变量。
 - 每项都保持幂等、可 `--dry-run`、可回滚。
 

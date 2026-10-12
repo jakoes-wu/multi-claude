@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `list` renews an expired access token before looking up the plan, the way
+  Claude Code does (same lock, same token endpoint, the new tokens saved in
+  place), so accounts that have not been started for a few hours show their
+  plan too. `list --no-refresh` keeps the previous read-only behaviour, and
+  `list --json` reports the outcome in `plan.refresh`.
+
+### Changed
+
+- The `PLAN` cell of an account whose access token has run out reads
+  `token expired` instead of `expired`, and the hint says that the
+  subscription is not affected. `plan.status` in `list --json` is unchanged.
+
+### Security
+
+- `list` may now write to a login: it saves the renewed tokens to the
+  keychain item or `.credentials.json` they came from. Nothing else is
+  changed in the login, and no other command writes to it.
+
 ## [0.9.0] - 2026-10-11
 
 ### Added
