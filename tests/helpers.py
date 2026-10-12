@@ -32,9 +32,35 @@ exit "${FAKE_CLAUDE_RC:-0}"
 # 每次调用把参数逐行追加到记录文件，以一行 `--` 分隔；退出码由 FAKE_SECURITY_RC 决定（默认 44 = 不存在）。
 # 带 -w（读出条目内容）且退出码为 0 时输出 FAKE_SECURITY_SECRET 指向的文件，未设置时输出 `{}`：
 # 真实的 security 在条目存在时一定有输出，`{}` 表示“条目在，但里面没有 OAuth 登录”。
+# `-i`（从 stdin 读一行命令，Claude Code 用它写钥匙串）：把这一行记进日志（十六进制内容换成 <hex>），
+# 并把 -X 后面的十六进制解码写入 FAKE_SECURITY_SECRET；退出码由 FAKE_SECURITY_WRITE_RC 决定（默认 0）。
+# 参数形式的 `add-generic-password … -X <hex>` 同样写入（日志里记的是完整参数）。
 FAKE_SECURITY = """#!/bin/sh
 printf '%s\\n' "$@" >> "$FAKE_SECURITY_LOG"
+if [ "${1:-}" = "-i" ]; then
+  IFS= read -r line
+  printf 'stdin: %s\\n' "$(printf '%s' "$line" | sed -E 's/-X "[0-9a-f]*"/-X <hex>/')" >> "$FAKE_SECURITY_LOG"
+  echo -- >> "$FAKE_SECURITY_LOG"
+  wrc="${FAKE_SECURITY_WRITE_RC:-0}"
+  if [ "$wrc" = 0 ] && [ -n "${FAKE_SECURITY_SECRET:-}" ]; then
+    hex="$(printf '%s' "$line" | sed -E 's/.*-X "([0-9a-f]*)".*/\\1/')"
+    perl -e 'print pack("H*", $ARGV[0])' "$hex" > "$FAKE_SECURITY_SECRET"
+  fi
+  exit "$wrc"
+fi
 echo -- >> "$FAKE_SECURITY_LOG"
+if [ "${1:-}" = "add-generic-password" ]; then
+  # 参数形式的写入（内容超过 -i 的长度上限时用）：-X 后面一个参数是十六进制内容
+  wrc="${FAKE_SECURITY_WRITE_RC:-0}"
+  prev=""
+  for arg in "$@"; do
+    if [ "$prev" = "-X" ] && [ "$wrc" = 0 ] && [ -n "${FAKE_SECURITY_SECRET:-}" ]; then
+      perl -e 'print pack("H*", $ARGV[0])' "$arg" > "$FAKE_SECURITY_SECRET"
+    fi
+    prev="$arg"
+  done
+  exit "$wrc"
+fi
 rc="${FAKE_SECURITY_RC:-44}"
 if [ "$rc" = 0 ]; then
   for arg in "$@"; do

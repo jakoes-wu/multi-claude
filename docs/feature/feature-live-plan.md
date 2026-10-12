@@ -1,5 +1,7 @@
 # list 实时显示套餐与订阅方式
 
+> 2026-10-11 注记（二）：本文“不刷新令牌、不写凭据”的决定已由 `docs/feature/feature-token-refresh.md` 改变：`list` 在访问令牌过期时自动刷新并写回，`--no-refresh` 保留本文的行为；`PLAN` 一格的 `expired` 改为 `token expired`。
+>
 > 2026-10-11 注记：已落地。读取令牌在 `src/multi_claude/identity.py:120`（`read_oauth_token`），查询在 `src/multi_claude/plan.py:105`（`query_all`）、`:136`（`query`）、`:185`（代理解析）、`:208`（请求与失败归类），接入 list 在 `src/multi_claude/cli.py:176`（`--offline`）、`:1279`、`:1338`（失败与过期提示）。验证：本机 macOS 全量 395 个用例通过，真实账号实测（§8 的 L1）通过；编译机 Ubuntu 20、Python 3.8.10 全量 395 个用例通过、7 个按环境跳过（都不在 `tests/test_plan.py` 内）。编译机没有安装 pyflakes，静态检查只在本机跑过。
 
 ## 1. 背景

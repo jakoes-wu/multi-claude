@@ -226,15 +226,18 @@ class LookupTest(PlanTestCase):
     def test_t4_expired_token_is_not_sent(self):
         self.ok("add", "work")
         self.credentials("work", expires_in_s=-60)
-        result = self.ok("list", env=self.live)
-        self.assertEqual(self.row(result.out, "work")[2:], ["expired", "-"])
-        self.assertIn("expired: start claude-work once to renew the login", result.err)
+        result = self.ok("list", "--no-refresh", env=self.live)
+        self.assertEqual(self.row(result.out, "work")[2:], ["token expired", "-"])
+        self.assertIn("token expired: the access token ran out, the subscription is not affected; "
+                      "start claude-work once", result.err)
+        self.assertNotIn("token refresh failed", result.err)
         self.assertEqual(self.server.requests, [])
 
     def test_t5_http_errors(self):
         self.ok("add", "work")
         self.credentials("work")
-        for status, cell, message in ((401, "expired", "expired: start claude-work"), (403, "rejected", ""),
+        for status, cell, message in ((401, "token expired", "token expired: the access token ran out"),
+                                      (403, "rejected", ""),
                                       (500, "error", "plan lookup failed for work: http_500 (via direct, ")):
             self.server.reply(status=status, raw=b'{"error": {"message": "boom ' + TOKEN.encode() + b'"}}')
             result = self.ok("list", env=self.live)
@@ -276,14 +279,15 @@ class LookupTest(PlanTestCase):
         self.credentials("work")
         self.ok("add", "idle")
         self.credentials("idle", expires_in_s=-1)
-        data = json.loads(self.ok("list", "--json", env=self.live).out)
+        data = json.loads(self.ok("list", "--json", "--no-refresh", env=self.live).out)
         plans = {entry["name"]: entry["plan"] for entry in data["accounts"]}
         self.assertEqual(plans["work"], {
             "status": "ok", "plan": "max (5x)", "billing": "apple", "organization_type": "claude_max",
-            "rate_limit_tier": "default_claude_max_5x", "billing_type": "apple_subscription", "reason": None})
+            "rate_limit_tier": "default_claude_max_5x", "billing_type": "apple_subscription", "reason": None,
+            "refresh": None})
         self.assertEqual(plans["idle"], {
             "status": "expired", "plan": None, "billing": None, "organization_type": None,
-            "rate_limit_tier": None, "billing_type": None, "reason": None})
+            "rate_limit_tier": None, "billing_type": None, "reason": None, "refresh": None})
         self.assertEqual(data["schema_version"], 1)
 
     def test_t14_test_mode_without_endpoint_never_connects(self):

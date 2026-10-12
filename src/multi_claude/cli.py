@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
 from . import (__version__, accounts, bundle, completion, doctor, history, hook, identity, launcher, migrate,
-               plan, platform, restore, routes, sessions, shellpath, statusline, usage)
+               plan, platform, refresh, restore, routes, sessions, shellpath, statusline, usage)
 from .actions import LOG_PREFIX, error, info, warn
 from .config import (DEFAULT_SHARED_DIR, DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError, RouteRule,
                      is_unshareable, load_config, normalize_proxy, parse_config, validate_env_key, validate_name,
@@ -173,6 +173,9 @@ def build_parser() -> argparse.ArgumentParser:
                            help="show every field, the global settings and the keychain details")
     list_mode.add_argument("--json", action="store_true", help="print machine-readable JSON (includes usage)")
     list_mode.add_argument("--names", action="store_true", help="print only the account names, one per line")
+    p_list.add_argument("--no-refresh", action="store_true",
+                        help="do not renew an expired access token (never write to the login); "
+                             "such accounts show 'token expired'")
     p_list.add_argument("--offline", action="store_true",
                         help="skip the plan lookup: do not read access tokens and do not connect to the network")
 
@@ -400,7 +403,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             warn(notice)
         # list 与 usage 只读：不加写锁，迁移未完成时也放行。
         if args.command == "list":
-            return cmd_list(verbose=args.verbose, as_json=args.json, names_only=args.names, offline=args.offline)
+            return cmd_list(verbose=args.verbose, as_json=args.json, names_only=args.names, offline=args.offline,
+                            refresh_tokens=not args.no_refresh)
         if args.command == "usage":
             if args.history:
                 return cmd_usage_history(args.name, args.days, args.by or "day", args.json)
@@ -1263,8 +1267,10 @@ def _checked_proxy(value: str) -> str:
         raise UsageError(str(exc))
 
 
-def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = False, offline: bool = False) -> int:
-    """列出账号。除 --names 与 --offline 外，会读各账号的访问令牌并向服务端查询套餐（方案 feature-live-plan）。"""
+def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = False, offline: bool = False,
+             refresh_tokens: bool = True) -> int:
+    """列出账号。除 --names 与 --offline 外，会读各账号的访问令牌并向服务端查询套餐（方案 feature-live-plan）；
+    访问令牌过期时先刷新并写回凭据，refresh_tokens 为假时不刷新（方案 feature-token-refresh）。"""
     config, exists = load_config()
     if names_only:
         # 给补全脚本用：只输出名称，不输出任何告警。
@@ -1276,7 +1282,8 @@ def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = Fa
         if variable in os.environ:
             warn("{} is set; launchers do not change it, even with proxy off".format(variable))
     # 套餐只查一次，表格与 JSON 共用；None 表示本次不查（--offline 或还没有配置）。
-    plans = None if offline or not exists else plan.query_all(config, os.environ, datetime.now(timezone.utc))
+    plans = None if offline or not exists else plan.query_all(config, os.environ, datetime.now(timezone.utc),
+                                                             allow_refresh=refresh_tokens)
     if as_json:
         _print_json(_list_data(config, exists, plans))
         if exists:
@@ -1336,20 +1343,27 @@ def _plan_cells(plans: Optional[dict], name: str) -> tuple:
 
 
 def _report_plan_problems(plans: Optional[dict]) -> None:
-    """套餐查询的失败与过期提示，打到 stderr；不影响表格、STATUS 列与退出码。"""
+    """套餐查询与令牌刷新的失败提示，打到 stderr；不影响表格、STATUS 列与退出码。"""
     if plans is None:
         return
     expired = []
     for name, result in plans.items():
+        if result.refresh == refresh.SAVE_FAILED:
+            # 新令牌只用了这一次、没存下来：旧的刷新令牌多半已作废，下次启动可能要重新登录。
+            error("the renewed login of {0} could not be saved; if claude-{0} asks you to log in, "
+                  "run multi-claude login {0}".format(name))
         if result.status == plan.STATUS_ERROR:
             warn(plan.failure_text(name, result))
         elif result.status == plan.STATUS_EXPIRED:
             expired.append(name)
+            if result.refresh is not None:
+                hint = "; run multi-claude login {}".format(name) if result.refresh in refresh.NEEDS_LOGIN else ""
+                warn("token refresh failed for {}: {}{}".format(name, result.refresh, hint))
     if expired:
-        # multi-claude 不刷新令牌：让 Claude Code 自己续期，再查一次即可。
         # 走 stderr 而不是 info()：info() 写 stdout，会混进 --json 的输出。
-        print("{} expired: start {} once to renew the login, then run list again".format(
-            LOG_PREFIX, ", ".join("claude-" + name for name in expired)), file=sys.stderr)
+        print("{} token expired: the access token ran out, the subscription is not affected; start {} once, "
+              "then run list again".format(LOG_PREFIX, ", ".join("claude-" + name for name in expired)),
+              file=sys.stderr)
 
 
 def _print_brief_list(config: Config, plans: Optional[dict] = None) -> int:

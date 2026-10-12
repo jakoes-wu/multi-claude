@@ -10,7 +10,7 @@
 
 在一台机器上同时使用多个 [Claude Code](https://code.claude.com/docs) 账号。每个账号有自己的登录、设置和历史记录，还可以有自己的代理，不用再反复退出、重新登录。
 
-它从不修改或复制你的登录信息，也不改你的 shell 配置文件。只有 `list` 会读取账号的访问令牌并联网，向 Anthropic 查询当前套餐；`list --offline` 不查。
+它从不复制或导出你的登录信息，也不改你的 shell 配置文件。只有 `list` 会读取账号的访问令牌并联网，向 Anthropic 查询当前套餐（令牌过期时先续期）；`list --offline` 完全不做这些。
 
 ```sh
 claude-work        # 用工作账号运行 Claude Code
@@ -37,8 +37,8 @@ claude            -> 行为不变
 
 ## 功能
 
-- **登录信息只属于你**：从不写入、复制、导出或刷新登录信息。只有一个命令会读取它：`list` 取各账号的访问令牌（macOS 在钥匙串，Linux 在 `.credentials.json`），向 Anthropic 查询该账号的套餐。令牌只留在内存里，只发往 `api.anthropic.com`，并且走该账号自己的代理。`list --offline` 什么都不读。其余命令只查询登录是否存在。`migrate-default` 和 `restore` 会整体搬动账号目录，Linux 上凭据文件随目录一起移动，内容不会被打开。
-- **只有一种联网**：`list` 的套餐查询（每个账号一次请求）是 multi-claude 唯一的网络连接，没有统计上报，也不检查更新；`list --offline` 完全不联网。只有安装脚本、pipx 或 Homebrew 会下载安装包。
+- **登录信息只属于你**：从不复制或导出登录信息。只有一个命令会动它：`list` 取各账号的访问令牌（macOS 在钥匙串，Linux 在 `.credentials.json`），向 Anthropic 查询该账号的套餐；访问令牌过期时，按 Claude Code 自己的方式续期，并把新令牌存回原处。令牌只留在内存里，只发往 Anthropic（`api.anthropic.com`，续期时是 `platform.claude.com`），并且走该账号自己的代理。`list --no-refresh` 不写入，`list --offline` 什么都不读。其余命令只查询登录是否存在。`migrate-default` 和 `restore` 会整体搬动账号目录，Linux 上凭据文件随目录一起移动，内容不会被打开。
+- **只有 `list` 联网**：它的套餐查询（每个账号一次请求，令牌过期时多一次续期请求）是 multi-claude 唯一的网络连接，没有统计上报，也不检查更新；`list --offline` 完全不联网。只有安装脚本、pipx 或 Homebrew 会下载安装包。
 - **不改你的 shell**：需要修改 `PATH` 时，只打印要加的那一行，不会改 `~/.zshrc` 或 `~/.bashrc`。
 - **只改你要它改的**：它只写自己的配置与状态文件、启动命令、账号目录（包括 `code` 放在 `<root>/.apps` 里的 VS Code 数据）和共享软链。Claude Code 的设置文件只在两种情况下被修改：`statusline install`（你指定的文件，会先备份）和 `add --config-from`（新账号的 `settings.json`）。
 - **迁移默认账号**：把已有的 `~/.claude` 移进账号根目录，登录不失效，直接运行 `claude` 的行为与之前完全一致。
@@ -51,7 +51,7 @@ claude            -> 行为不变
 
 ## 前置条件
 
-**服务器**：不需要。multi-claude 只在你自己的电脑上运行；唯一的网络请求是 `list` 向 Anthropic 查询套餐。
+**服务器**：不需要。multi-claude 只在你自己的电脑上运行；唯一的网络请求是 `list` 向 Anthropic 查询套餐和续期令牌。
 
 **你的电脑**：
 
@@ -292,15 +292,17 @@ work:
 NAME   LOGIN     PLAN      BILLING      PROXY                  SHARED  5H         7D       LAST USED  STATUS
 work   keychain  max (5x)  stripe       http://127.0.0.1:7890  no      23% 14:00  41% Fri  5m ago     ok
 home   keychain  pro       apple        inherit                no      -          -        2d ago     ok
-old    keychain  expired   -            inherit                no      -          -        9d ago     ok
+old    keychain  token expired  -       inherit                no      -          -        9d ago     ok
 ```
 
 `PLAN` 和 `BILLING` 不是缓存：每次运行 `list` 都用账号自己的访问令牌向 Anthropic 查询（`GET https://api.anthropic.com/api/oauth/profile`，与 Claude Code 自己发的请求相同）。`PLAN` 是订阅的套餐：`pro`、`max (5x)`、`max (20x)`、`team`、`enterprise`。`BILLING` 是付款渠道：`stripe`（claude.ai 官网）、`apple`（App Store）、`google-play`、`aws-marketplace` 等。
 
 - 请求按该账号的代理设置发出，与它的启动命令一致：配置了地址就走该代理，`inherit` 用当前 shell 的代理变量，`off` 不用代理。配置了代理而代理不通时，查询直接失败，不会改走直连。查询只支持 `http://` 代理。
-- `expired` 表示访问令牌已过期。令牌只有几小时有效期，multi-claude 不会刷新它（刷新会与正在运行的会话冲突）：启动一次 `claude-名称`，再运行 `list` 即可。`-` 表示该账号没有 OAuth 登录，`rejected` 表示服务端拒绝了这个令牌。
+- 访问令牌只有几小时有效期。过期时 `list` 先续期：取与 Claude Code 相同的锁（账号目录里的 `.oauth_refresh.lock`），把刷新令牌发到 `https://platform.claude.com/v1/oauth/token`，再把新令牌存回原处，登录信息里的其它内容原样保留。正在运行的 Claude 会话会自己用上新令牌。如果别的进程刚刚续期过，`list` 直接采用那个结果，不写入；如果别的进程正持有锁，`list` 不等待，这一次显示 `token expired`。这套做法依据的是 Claude Code 2.1.295 的实际行为，不是公开的接口。
+- `token expired` 表示访问令牌已过期且没能续期，订阅本身不受影响。原因打印在 stderr（如 `token refresh failed for work: lock_busy`）。启动一次 `claude-名称`，再运行 `list` 即可；原因是 `refresh_rejected` 或 `no_refresh_token` 时，需要用 `multi-claude login 名称` 重新登录。`list --no-refresh` 不续期，也不写登录信息。
+- `-` 表示该账号没有 OAuth 登录，`rejected` 表示服务端拒绝了这个令牌。
 - `error` 的原因打印在 stderr，例如 `plan lookup failed for work: timeout (via 127.0.0.1:7890, 10.01s)`。`tls_failed` 通常是运行 multi-claude 的 Python 没有根证书（python.org 的安装包带有 `Install Certificates.command`）。
-- `list --offline` 跳过查询：不读令牌、不发请求，表格里没有这两列。`list --json` 在每个账号的 `plan` 对象里给出同样的数据，脚本应读它而不是解析表格。查询通常多花一秒左右，最多 15 秒。
+- `list --offline` 跳过查询：不读令牌、不发请求，表格里没有这两列。`list --json` 在每个账号的 `plan` 对象里给出同样的数据（`refresh` 字段说明是否续期过），脚本应读它而不是解析表格。查询通常多花一秒左右，最多 15 秒；已经开始的续期会先等它完成（第一次 Ctrl-C 只打印提示），以免新的登录信息丢失。
 
 ### 把会话交给另一个账号
 
@@ -436,7 +438,7 @@ multi-claude remove main         # 注销账号
 
 ### multi-claude 会读取或复制我的登录信息吗？
 
-它从不写入、复制、导出、上传、刷新或备份登录信息。只有一个命令会读取它：`list` 取各账号的访问令牌，向 Anthropic 查询套餐（见[套餐与付款渠道](#套餐与付款渠道)）；令牌只留在内存里，只发往 `api.anthropic.com`。`list --offline` 不读取。其余命令只查询登录是否存在。`migrate-default` 和 `restore` 会整体搬动账号目录；Linux 上凭据文件就在目录里，会随目录一起移动（复制模式下随整个目录一起复制、校验，然后删除原目录，除非加了 `--keep-backup`），内容同样不会被打开。macOS 上登录与账号目录的路径绑定，所以 `rename` 不会改动目录。
+它从不复制、导出、上传或备份登录信息。只有一个命令会动它：`list` 取各账号的访问令牌，向 Anthropic 查询套餐；访问令牌过期时先续期，并把新令牌存回原处（见[套餐与付款渠道](#套餐与付款渠道)）。令牌只留在内存里，只发往 Anthropic。`list --no-refresh` 不写入，`list --offline` 不读取。其余命令只查询登录是否存在。`migrate-default` 和 `restore` 会整体搬动账号目录；Linux 上凭据文件就在目录里，会随目录一起移动（复制模式下随整个目录一起复制、校验，然后删除原目录，除非加了 `--keep-backup`），内容同样不会被打开。macOS 上登录与账号目录的路径绑定，所以 `rename` 不会改动目录。
 
 ## 参考
 
@@ -456,7 +458,7 @@ multi-claude remove main         # 注销账号
 | `multi-claude args (名称 \| --defaults) -- [参数 ...]` | 整体替换固定参数；`--` 后面为空表示清空 |
 | `multi-claude remove 名称` | 注销账号并删除其启动命令。**账号目录和登录都会保留** |
 | `multi-claude apply [-f 文件]` | 按配置（或 `文件`）收敛全部账号 |
-| `multi-claude list [--verbose \| --json \| --names] [--offline]` | 列出账号、启动命令、登录状态，以及向 Anthropic 查询到的套餐与付款渠道；`--json` 额外包含用量，供脚本使用；`--names` 只输出名称；`--offline` 跳过套餐查询（不读令牌、不联网） |
+| `multi-claude list [--verbose \| --json \| --names] [--no-refresh] [--offline]` | 列出账号、启动命令、登录状态，以及向 Anthropic 查询到的套餐与付款渠道；`--json` 额外包含用量，供脚本使用；`--names` 只输出名称；`--no-refresh` 不续期过期的访问令牌（不写登录信息）；`--offline` 跳过套餐查询（不读令牌、不联网） |
 | `multi-claude usage [名称] [--json]` | 显示各账号最近一次已知的 5 小时 / 7 天用量 |
 | `multi-claude usage --history [名称] [--days N] [--by day\|model] [--json]` | 按天或按模型统计本机会话记录里的 token 用量（默认 7 天） |
 | `multi-claude doctor [--json] [--verbose]` | 检查配置、启动命令、账号目录、共享软链、登录与环境变量 |
