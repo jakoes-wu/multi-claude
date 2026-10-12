@@ -95,6 +95,12 @@
 | list 的 PLAN、BILLING 两列 | 用各账号的访问令牌向服务端实时查询，走该账号的代理；`list --offline` 不查 | `feature-live-plan.md` | v0.9.0（PR #37） |
 | 过期令牌自动刷新 | 访问令牌过期时按 Claude Code 的方式刷新并写回；没刷新成显示 `token expired`；`list --no-refresh` 不写 | `feature-token-refresh.md` | v0.9.1（PR #39） |
 
+### 2.10 查找会话
+
+| 项 | 实现 | 设计文档 | 发布 |
+| ---- | ---- | ---- | ---- |
+| 跨账号、跨目录的会话列表 | `sessions [NAME]`（别名 `conversations`）：只读列出各账号各目录的会话与续聊命令，含未迁移的 `~/.claude` | `feature-session-list.md` | 未发布 |
+
 ## 3. 待定（未排期）
 
 - `use NAME`（切换 `~/.claude` 指向的账号）：**不做**（用户 2026-10-03 决定）。直接运行 `claude` 时钥匙串登录（macOS）、`~/.claude.json` 与 default 账号启动命令的指向检查都不跟着 `~/.claude` 走，切换后会混用两个账号的状态；改用各账号的启动命令，或 `route --default NAME` 加 `claude-auto`。见 `feature-everyday-commands.md` §6、§10。

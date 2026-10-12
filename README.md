@@ -304,6 +304,26 @@ old    keychain  token expired  -       inherit                no      -        
 - `error` comes with a reason on stderr, for example `plan lookup failed for work: timeout (via 127.0.0.1:7890, 10.01s)`. `tls_failed` usually means the Python that runs multi-claude has no root certificates (python.org installers ship an `Install Certificates.command`).
 - `list --offline` skips the lookup — no token is read, nothing is sent — and prints the table without the two columns. `list --json` carries the same data in each account's `plan` object (`refresh` tells whether a token was renewed); scripts should use it instead of parsing the table. The lookup adds about a second, at most 15; a renewal that is under way is allowed to finish first (the first Ctrl-C only prints a notice), so that the new login is not lost.
 
+### Finding a session
+
+Forgot which account or which directory a session was started in? `sessions` lists the sessions of every account and every project directory, newest first, each followed by the command that resumes it:
+
+```sh
+multi-claude sessions
+# ACCOUNT  UPDATED           CREATED           SESSION ID                            TITLE
+# work     2026-10-11 17:42  2026-10-11 16:05  3c588340-1219-48df-a231-509866789487  Fix the importer
+#   cd /path/to/project && claude-work --resume 3c588340-1219-48df-a231-509866789487
+multi-claude sessions work            # one account
+multi-claude sessions --grep importer # title, directory or session id contains the text
+```
+
+- It shows the 30 most recent sessions; `--limit N` changes that and `--limit 0` shows all. `--json` prints every match with the full fields (`directory`, `created`, `updated`, `title_source`, `file`, `resume`). `conversations` is another name for the same command.
+- The title is the session's name in Claude Code; a session without one shows the beginning of its first prompt, and `-` if it has no prompt at all. Times are local. `UPDATED` is the time of the last message, or the file's modification time when the session has no timestamps.
+- A `~/.claude` that has not been turned into an account is listed as `default`.
+- A session copied with `handoff` appears once per account that has a copy.
+- The command is read-only and stays on this machine: it reads the start and the end of each session file, prints the title (a piece of your conversation) to the terminal, and saves or sends nothing. It does not list subagent transcripts.
+- If the directory a session was started in no longer exists, the `cd` in the resume command fails; `claude --resume` only finds a session from the directory it was started in.
+
 ### Handing a session over to another account
 
 Each account keeps its own sessions, so `claude --resume` in one account cannot see the sessions of another. `handoff` copies one session (its `.jsonl` file and the folder next to it with subagent transcripts and saved tool output) into the same project folder of another account:
@@ -424,6 +444,10 @@ The one in `~/.claude`, as before: multi-claude does not change it. After [migra
 
 There is no command that switches which account plain `claude` uses. Besides `~/.claude`, plain `claude` reads the login in the keychain (macOS) and `~/.claude.json`, and neither would follow such a switch, so two accounts would get mixed up. Use the launchers (`claude-work`), or `multi-claude route --default work` and start `claude-auto`.
 
+### Which account or directory was that session in?
+
+`multi-claude sessions --grep TEXT` searches the titles, directories and ids of the sessions of all accounts and prints the command that resumes each match. See [Finding a session](#finding-a-session).
+
 ### How do I continue a conversation with another account?
 
 Inside the Claude session, run `! multi-claude handoff OTHER`, then run the command it prints in a new terminal. See [Handing a session over to another account](#handing-a-session-over-to-another-account).
@@ -471,6 +495,7 @@ It never copies, exports, uploads or backs up a login. One command touches one: 
 | `multi-claude path NAME` | Print the account's directory. |
 | `multi-claude code NAME [PATH] [-- ARGS ...]` | Open a separate VS Code instance with the account's environment (experimental). |
 | `multi-claude handoff TARGET [--from NAME] [--session ID] [--force]` | Copy a session to another account and print the command that resumes it there. |
+| `multi-claude sessions [NAME] [--grep TEXT] [--limit N] [--json]` | List the sessions of every account and directory, newest first, with the command that resumes each. Also `conversations`. |
 | `multi-claude statusline install\|uninstall FILE` | Wrap the statusLine command in a settings file so that `usage` gets fresh numbers, or restore it. |
 | `multi-claude completion bash\|zsh\|fish` | Print a shell completion script. |
 

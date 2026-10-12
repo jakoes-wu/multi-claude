@@ -16,7 +16,7 @@ import stat
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Tuple
+from typing import List, NamedTuple, Optional, Tuple
 
 from . import (__version__, accounts, bundle, completion, doctor, history, hook, identity, launcher, migrate,
                plan, platform, refresh, restore, routes, sessions, shellpath, statusline, usage)
@@ -55,6 +55,7 @@ COMMAND_GROUPS = [
         ("usage", "5-hour and 7-day usage of each account"),
         ("route, which", "choose an account by directory (launcher claude-auto)"),
         ("handoff", "copy a session to another account"),
+        ("sessions", "find a session across accounts and directories"),
         ("mcp", "run `claude mcp` as an account"),
         ("run, path", "run any command as an account; print its directory"),
         ("code", "open VS Code for an account (experimental)"),
@@ -276,6 +277,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_handoff.add_argument("--force", action="store_true",
                            help="back up and replace a different copy of the session in TARGET")
     _add_dry_run(p_handoff)
+
+    p_sessions = sub.add_parser("sessions", description="list the Claude sessions of every account and every directory, "
+                                                 "newest first, each with the command that resumes it "
+                                                 "(read-only; also available as `conversations`): "
+                                                 "sessions [NAME] [--grep TEXT] [--limit N] [--json]")
+    p_sessions.add_argument("name", nargs="?", metavar="NAME",
+                            help="only this account (`default` is the unregistered ~/.claude)")
+    p_sessions.add_argument("--grep", metavar="TEXT",
+                            help="only sessions whose title, directory or id contains TEXT (case-insensitive)")
+    p_sessions.add_argument("--limit", type=int, metavar="N",
+                            help="show at most N sessions, 0 for all (default: 30, or all with --json)")
+    p_sessions.add_argument("--json", action="store_true", help="print machine-readable JSON")
     return parser
 
 
@@ -368,6 +381,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not argv:
         # 不带参数：新用户先看到怎么上手，已有配置的用户看到账号表（方案 feature-easier-onboarding §5.1.1）。
         return cmd_overview()
+    argv = _resolve_command_alias(argv)
     parser = build_parser()
     unknown = _unknown_command(parser, argv) or _misplaced_account_name(argv)
     if unknown is not None:
@@ -411,6 +425,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             if args.days is not None or args.by is not None:
                 raise UsageError("--days and --by need --history")
             return cmd_usage(args.name, args.json)
+        if args.command == "sessions":
+            # 只读：不加写锁，迁移未完成时也放行（与 list、usage 相同）。
+            return cmd_sessions(args.name, args.grep, args.limit, args.json)
         if args.command == "which":
             return cmd_which(args.path)
         if args.command == "statusline":
@@ -1024,6 +1041,23 @@ Already have a login in ~/.claude? It keeps working as plain `claude`;
 `multi-claude migrate-default --help` explains how to turn it into an account.
 All commands: multi-claude --help
 """
+
+
+# 别名 -> 子命令。不用 argparse 的 aliases：别名进了解析器，分组帮助、补全和 args.command 都要跟着处理两个名字。
+_COMMAND_ALIASES = {"conversations": "sessions"}
+
+
+def _resolve_command_alias(argv: List[str]) -> List[str]:
+    """把子命令位置上的别名换成正式的子命令名；其它位置上的同名词（例如叫 conversations 的账号）不动。
+
+    子命令位置就是第一个不以 - 开头的词：顶层解析器没有带值的选项，_unknown_command 也按同一规则取词。
+    """
+    for index, token in enumerate(argv):
+        if not token.startswith("-"):
+            if token in _COMMAND_ALIASES:
+                return argv[:index] + [_COMMAND_ALIASES[token]] + argv[index + 1:]
+            break
+    return argv
 
 
 def _unknown_command(parser: argparse.ArgumentParser, argv: List[str]) -> Optional[str]:
@@ -1700,6 +1734,129 @@ def cmd_handoff(target_name: str, source_name: Optional[str], session_id: Option
             info("backup: {}".format(backup))
     info("continue with: {}".format(resume))
     return accounts.EXIT_OK
+
+
+class _SessionSource(NamedTuple):
+    # 账号列显示的名字；未登记的默认目录显示 default
+    name: str
+    directory: str
+    # 续聊命令里启动 Claude 的那一段
+    launcher: str
+    registered: bool
+
+
+_UNREGISTERED_DEFAULT = "default"
+# 未登记的默认目录没有启动命令，只能直接运行 claude；去掉这两个变量，在别的账号的 Claude 会话里
+# 运行也会落到默认目录（default 身份的启动命令同样先 unset 它们）。
+_DEFAULT_LAUNCHER = "env -u CLAUDE_CONFIG_DIR -u CLAUDE_SECURESTORAGE_CONFIG_DIR claude"
+_SESSIONS_TEXT_LIMIT = 30
+# 标题来自会话内容，可能是整段粘贴的提问：表格里只留开头，JSON 里也设上限
+_TITLE_TEXT_CHARS = 60
+_TITLE_JSON_CHARS = 200
+
+
+def _session_sources(config: Config, exists: bool) -> List[_SessionSource]:
+    """要列会话的目录：登记的每个账号，加上还没迁移成账号的默认目录 ~/.claude。"""
+    sources = [_SessionSource(account.name, accounts.account_dir(config, account.name), "claude-" + account.name, True)
+               for account in (config.accounts.values() if exists else [])]
+    default = accounts.default_dir()
+    # 做过 migrate-default 后 ~/.claude 是指向账号目录的软链，按真实路径比较才不会把同一批会话列两遍
+    known = {os.path.realpath(source.directory) for source in sources}
+    if os.path.isdir(os.path.join(default, "projects")) and os.path.realpath(default) not in known:
+        sources.append(_SessionSource(_UNREGISTERED_DEFAULT, default, _DEFAULT_LAUNCHER, False))
+    return sources
+
+
+def cmd_sessions(name: Optional[str], grep: Optional[str], limit: Optional[int], as_json: bool) -> int:
+    """只读列出各账号、各目录的会话，最近更新的在前，每条附续聊命令（方案 feature-session-list）。
+
+    会把会话标题或首条提问的开头打印出来（这是对话内容的片段），不保存、不联网、不读凭据。
+    同一会话 ID 在多个账号里各有一份时（handoff 复制过）各列一行，不合并。
+    """
+    if limit is not None and limit < 0:
+        raise UsageError("--limit must be 0 or more")
+    config, exists = load_config()
+    sources = _session_sources(config, exists)
+    if name is not None:
+        # 名字先校验，没有配置文件时也一样：不合法的名字是用法错误（退出 2），不是“未登记”
+        _checked_name(name)
+        account = config.find(name) if exists else None
+        if account is not None:
+            # 登记账号优先：账号本身叫 default 时，`sessions default` 指的是它，不是未登记的默认目录
+            sources = [source for source in sources if source.registered and source.name == account.name]
+        elif name.casefold() == _UNREGISTERED_DEFAULT and any(not source.registered for source in sources):
+            sources = [source for source in sources if not source.registered]
+        else:
+            error("account {!r} is not registered".format(name))
+            return accounts.EXIT_ERROR
+    entries = []
+    skipped = 0
+    needle = grep.casefold() if grep else None
+    for source in sources:
+        found, unreadable = sessions.list_sessions(source.directory)
+        skipped += unreadable
+        for session in found:
+            full_title = sessions.clean_title(session.title, len(session.title))
+            if needle is not None and not any(needle in text.casefold() for text in (
+                    full_title, session.directory or session.project, session.session_id)):
+                continue
+            entries.append((source, session, full_title))
+    entries.sort(key=lambda entry: (-entry[1].updated.timestamp(), entry[0].name, entry[1].session_id))
+    total = len(entries)
+    if limit is None:
+        limit = 0 if as_json else _SESSIONS_TEXT_LIMIT
+    if limit:
+        entries = entries[:limit]
+    if skipped:
+        warn("skipped {} session file(s) that could not be read".format(skipped))
+    if as_json:
+        _print_json({"schema_version": 1, "sessions": [{
+            "account": source.name, "registered": source.registered, "directory": session.directory,
+            "project": session.project, "session_id": session.session_id,
+            "title": sessions.clean_title(full_title, _TITLE_JSON_CHARS), "title_source": session.title_source,
+            "created": _iso(session.created), "updated": _iso(session.updated), "file": session.path,
+            "resume": _resume_command(source, session)} for source, session, full_title in entries],
+            "total": total, "skipped": skipped})
+        return accounts.EXIT_OK
+    if not entries:
+        print("no sessions found")
+        return accounts.EXIT_OK
+    # 不用 _print_table：每条会话下面要插一行续聊命令。标题放最后一列，中文标题的显示宽度不影响前面各列对齐。
+    rows = [("ACCOUNT", "UPDATED", "CREATED", "SESSION ID", "TITLE", None)]
+    for source, session, full_title in entries:
+        resume = _resume_command(source, session)
+        if session.directory is None:
+            resume += "  (start directory unknown; project {})".format(
+                sessions.clean_title(session.project, len(session.project)))
+        rows.append((source.name, _local_minute(session.updated), _local_minute(session.created), session.session_id,
+                     sessions.clean_title(full_title, _TITLE_TEXT_CHARS) or "-", resume))
+    widths = [max(len(row[index]) for row in rows) for index in range(4)]
+    for row in rows:
+        print("  ".join([cell.ljust(width) for cell, width in zip(row[:4], widths)] + [row[4]]).rstrip())
+        if row[5] is not None:
+            print("  " + row[5])
+    if total > len(entries):
+        print("showing {} of {} sessions; use --limit 0 for all, or --grep TEXT to narrow".format(len(entries), total))
+    return accounts.EXIT_OK
+
+
+def _resume_command(source: _SessionSource, session: sessions.SessionInfo) -> str:
+    """续聊命令。Claude 按当前目录找会话，所以先 cd 到会话启动时的目录；目录未知时只给后半段。"""
+    resume = "{} --resume {}".format(source.launcher, session.session_id)
+    if session.directory is None:
+        return resume
+    return "cd {} && {}".format(shlex.quote(session.directory), resume)
+
+
+def _local_minute(moment: Optional[datetime]) -> str:
+    if moment is None:
+        return "-"
+    try:
+        return moment.astimezone().strftime("%Y-%m-%d %H:%M")
+    except (OverflowError, OSError, ValueError):
+        # 会话文件里的时间戳可以是任何合法的 ISO 时间；公元 1 年、9999 年这类值换算成本地时间会越界。
+        # 当作没有时间显示，不让一条坏记录中断整张表
+        return "-"
 
 
 def cmd_statusline(action: str, path: str, dry_run: bool) -> int:
