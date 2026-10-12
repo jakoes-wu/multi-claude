@@ -93,6 +93,7 @@
 | 项 | 实现 | 设计文档 | 发布 |
 | ---- | ---- | ---- | ---- |
 | list 的 PLAN、BILLING 两列 | 用各账号的访问令牌向服务端实时查询，走该账号的代理；`list --offline` 不查 | `feature-live-plan.md` | v0.9.0（PR #37） |
+| 过期令牌自动刷新 | 访问令牌过期时按 Claude Code 的方式刷新并写回；没刷新成显示 `token expired`；`list --no-refresh` 不写 | `feature-token-refresh.md` | v0.9.1（PR #39） |
 
 ## 3. 待定（未排期）
 
