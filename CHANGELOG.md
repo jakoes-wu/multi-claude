@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `sessions [NAME] [--grep TEXT] [--limit N] [--json]` (also `conversations`)
+  lists the Claude sessions of every account and every project directory,
+  newest first: account, last update, creation time, session id and title,
+  each followed by the command that resumes it. A `~/.claude` that is not an
+  account yet is listed as `default`. Read-only; it prints session titles
+  (or the beginning of the first prompt) to the terminal and saves or sends
+  nothing.
+
 ## [0.9.1] - 2026-10-11
 
 ### Added

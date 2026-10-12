@@ -304,6 +304,26 @@ old    keychain  token expired  -       inherit                no      -        
 - `error` 的原因打印在 stderr，例如 `plan lookup failed for work: timeout (via 127.0.0.1:7890, 10.01s)`。`tls_failed` 通常是运行 multi-claude 的 Python 没有根证书（python.org 的安装包带有 `Install Certificates.command`）。
 - `list --offline` 跳过查询：不读令牌、不发请求，表格里没有这两列。`list --json` 在每个账号的 `plan` 对象里给出同样的数据（`refresh` 字段说明是否续期过），脚本应读它而不是解析表格。查询通常多花一秒左右，最多 15 秒；已经开始的续期会先等它完成（第一次 Ctrl-C 只打印提示），以免新的登录信息丢失。
 
+### 查找会话
+
+记不清某条会话是在哪个账号、哪个目录下开的？`sessions` 列出所有账号、所有项目目录下的会话，最近更新的在前，每条下面附一条续聊命令：
+
+```sh
+multi-claude sessions
+# ACCOUNT  UPDATED           CREATED           SESSION ID                            TITLE
+# work     2026-10-11 17:42  2026-10-11 16:05  3c588340-1219-48df-a231-509866789487  Fix the importer
+#   cd /path/to/project && claude-work --resume 3c588340-1219-48df-a231-509866789487
+multi-claude sessions work            # 只看一个账号
+multi-claude sessions --grep importer # 名称、目录或会话 ID 里含这段文字
+```
+
+- 默认显示最近的 30 条；`--limit N` 可以改，`--limit 0` 显示全部。`--json` 输出全部匹配的会话和完整字段（`directory`、`created`、`updated`、`title_source`、`file`、`resume`）。`conversations` 是同一个命令的另一个名字。
+- 名称是会话在 Claude Code 里的标题；没有标题的会话显示首条提问的开头，连提问都没有的显示 `-`。时间是本地时间，`UPDATED` 是最后一条消息的时间，会话里没有时间戳时用文件的修改时间。
+- 还没有迁移成账号的 `~/.claude` 显示为 `default`。
+- 用 `handoff` 复制过的会话，在每个有副本的账号里各列一行。
+- 这个命令只读，只在本机运行：它读每个会话文件的开头和结尾，把名称（你对话内容的一小段）打印到终端，不保存也不发往任何地方。不列子代理记录。
+- 会话启动时的目录已经不存在时，续聊命令里的 `cd` 会失败；`claude --resume` 只能在会话启动的那个目录里找到它。
+
 ### 把会话交给另一个账号
 
 每个账号的会话各自存放，在一个账号里 `claude --resume` 看不到另一个账号的会话。`handoff` 把一条会话（`.jsonl` 文件以及旁边存放子代理记录和工具输出的同名目录）复制到另一个账号的同一项目目录下：
@@ -424,6 +444,10 @@ multi-claude remove main         # 注销账号
 
 没有“切换直接运行 `claude` 所用账号”的命令。除了 `~/.claude`，直接运行的 `claude` 还会读钥匙串里的登录（macOS）和 `~/.claude.json`，这两样都不会跟着切换，结果是两个账号的东西混在一起。请用各账号的启动命令（如 `claude-work`），或者 `multi-claude route --default work` 后运行 `claude-auto`。
 
+### 某条会话是在哪个账号、哪个目录下开的？
+
+`multi-claude sessions --grep 文字` 在所有账号的会话里按名称、目录和会话 ID 查找，并给出每条匹配会话的续聊命令。见[查找会话](#查找会话)。
+
 ### 怎么把对话交给另一个账号继续？
 
 在 Claude 会话里运行 `! multi-claude handoff 另一个账号`，再在新终端里运行它打印出的命令。见[把会话交给另一个账号](#把会话交给另一个账号)。
@@ -471,6 +495,7 @@ multi-claude remove main         # 注销账号
 | `multi-claude path 名称` | 打印账号目录 |
 | `multi-claude code 名称 [路径] [-- 参数 ...]` | 以账号环境打开一个独立的 VS Code 实例（实验功能） |
 | `multi-claude handoff 目标 [--from 名称] [--session ID] [--force]` | 把一条会话复制到另一个账号，并打印在那边续聊的命令 |
+| `multi-claude sessions [名称] [--grep 文字] [--limit N] [--json]` | 列出所有账号、所有目录下的会话，最近更新的在前，并附续聊命令；也可写成 `conversations` |
 | `multi-claude statusline install\|uninstall 文件` | 包装设置文件里的 statusLine 命令，让 `usage` 拿到更新的数值；或还原它 |
 | `multi-claude completion bash\|zsh\|fish` | 输出 shell 补全脚本 |
 

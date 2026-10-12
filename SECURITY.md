@@ -33,6 +33,12 @@ steps to reproduce. You should receive a reply within a week.
   account's configured proxy; a failing proxy is never bypassed. Expired
   access tokens are not sent. `list --offline` and `list --names` read no
   token and make no request.
+- One command prints conversation content: `multi-claude sessions` reads the
+  start and the end of each session file (`projects/*/*.jsonl`) and prints
+  each session's title, or the beginning of its first prompt when it has no
+  title, to the terminal (or to stdout with `--json`). Control characters
+  are removed before printing. Nothing is saved or sent anywhere; no
+  credential is read.
 - Every other command only checks whether a login exists
   (`security find-generic-password -a <user> -s <service>` without `-w` or
   `-g`) and makes no network connection.
