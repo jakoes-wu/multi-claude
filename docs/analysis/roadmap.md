@@ -99,7 +99,7 @@
 
 | 项 | 实现 | 设计文档 | 发布 |
 | ---- | ---- | ---- | ---- |
-| 跨账号、跨目录的会话列表 | `sessions [NAME]`（别名 `conversations`）：只读列出各账号各目录的会话，加 `--cmd` 附续聊命令（v0.10.0 时默认就附），含未迁移的 `~/.claude` | `feature-session-list.md` | v0.10.0（PR #41） |
+| 跨账号、跨目录的会话列表 | `sessions [NAME]`（别名 `conversations`）：只读列出各账号各目录的会话，加 `--cmd` 附续聊命令（v0.10.0 时默认就附），含未迁移的 `~/.claude` | `feature-session-list.md`、`feature-sessions-cmd-column.md` | v0.10.0（PR #41）；排版与 `--cmd` v0.11.0（PR #43） |
 
 ## 3. 待定（未排期）
 
