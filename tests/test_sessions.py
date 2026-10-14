@@ -5,6 +5,8 @@
 
 import json
 import os
+import shlex
+import shutil
 import sys
 import unittest
 
@@ -83,15 +85,68 @@ class ListingTest(SessionsTestCase):
         self.make(self.dir_b, SID3, [user("q", cwd="/w/third", ts="2026-10-02T00:00:00.000Z"), ai("Middle session")],
                   project="-w-third")
         out = self.ok("sessions", env={"TZ": "Asia/Shanghai"}).out.splitlines()
-        self.assertEqual(out[0].split(), ["ACCOUNT", "UPDATED", "CREATED", "SESSION", "ID", "TITLE"])
-        # 按最后更新时间从新到旧；时间按本地时区（UTC+8）显示
-        self.assertEqual(out[1], "a        2026-10-03 09:00  2026-10-03 00:30  {}  Newest session".format(SID2))
-        self.assertEqual(out[2], "  cd /w/other && claude-a --resume " + SID2)
-        self.assertEqual(out[3], "b        2026-10-02 08:00  2026-10-02 08:00  {}  Middle session".format(SID3))
-        self.assertEqual(out[4], "  cd /w/third && claude-b --resume " + SID3)
-        self.assertEqual(out[5], "a        2026-10-01 11:30  2026-10-01 10:00  {}  Older session".format(SID1))
-        self.assertEqual(out[6], "  cd /w/proj && claude-a --resume " + SID1)
-        self.assertEqual(len(out), 7)
+        # 按最后更新时间从新到旧；时间按本地时区（UTC+8）显示。不带 --cmd 时每条会话一行，不打印续聊命令
+        self.assertEqual(out, [
+            "TITLE           ACCOUNT  CREATED           UPDATED           SESSION ID",
+            "Newest session  a        2026-10-03 00:30  2026-10-03 09:00  " + SID2,
+            "Middle session  b        2026-10-02 08:00  2026-10-02 08:00  " + SID3,
+            "Older session   a        2026-10-01 10:00  2026-10-01 11:30  " + SID1])
+
+    def test_cmd_column_when_the_terminal_is_wide_enough(self):
+        self.make(self.dir_a, SID1, [user("q"), ai("One")])
+        self.make(self.dir_b, SID2, [user("q", cwd="/w/other", ts="2026-10-01T01:00:00.000Z"), ai("Two")],
+                  project="-w-other")
+        env = {"TZ": "Asia/Shanghai", "COLUMNS": "300"}
+        wide = self.ok("sessions", "--cmd", env=env).out.splitlines()
+        self.assertEqual(wide, [
+            "TITLE  ACCOUNT  CREATED           UPDATED           SESSION ID                            CMD",
+            "One    a        2026-10-01 10:00  2026-10-01 10:00  {0}  cd /w/proj && claude-a --resume {0}".format(SID1),
+            "Two    b        2026-10-01 09:00  2026-10-01 09:00  {0}  cd /w/other && claude-b --resume {0}".format(SID2)])
+        # 放不下时整张表改成命令单独一行；恰好放得下仍算放得下。标题与目录都是 ASCII，len 就是显示宽度
+        widest = max(len(line) for line in wide)
+        self.assertEqual(self.ok("sessions", "--cmd", env=dict(env, COLUMNS=str(widest))).out.splitlines(), wide)
+        narrow = [
+            "TITLE  ACCOUNT  CREATED           UPDATED           SESSION ID",
+            "One    a        2026-10-01 10:00  2026-10-01 10:00  " + SID1,
+            "  cd /w/proj && claude-a --resume " + SID1,
+            "Two    b        2026-10-01 09:00  2026-10-01 09:00  " + SID2,
+            "  cd /w/other && claude-b --resume " + SID2]
+        self.assertEqual(self.ok("sessions", "--cmd", env=dict(env, COLUMNS=str(widest - 1))).out.splitlines(), narrow)
+        self.assertEqual(self.ok("sessions", "--cmd", env=dict(env, COLUMNS="40")).out.splitlines(), narrow)
+
+    def test_wide_titles_keep_the_columns_aligned(self):
+        # 中文一个字占两格：按字符数补空格的话，中文标题后面的列会往右错
+        self.make(self.dir_a, SID1, [user("q"), custom("修复解析")])
+        self.make(self.dir_a, SID2, [user("q", ts="2026-10-01T01:00:00.000Z"), custom("abcdefgh")])
+        tail = "  a        2026-10-01 {}:00  2026-10-01 {}:00  {}"
+        env = {"TZ": "Asia/Shanghai"}
+        self.assertEqual(self.ok("sessions", env=env).out.splitlines(),
+                         ["TITLE     ACCOUNT  CREATED           UPDATED           SESSION ID",
+                          "修复解析" + tail.format("10", "10", SID1), "abcdefgh" + tail.format("09", "09", SID2)])
+        self.make(self.dir_a, SID3, [user("q", ts="2026-10-01T00:00:00.000Z"), custom("修复解析器")])
+        self.assertEqual(self.ok("sessions", env=env).out.splitlines(),
+                         ["TITLE       ACCOUNT  CREATED           UPDATED           SESSION ID",
+                          "修复解析  " + tail.format("10", "10", SID1), "abcdefgh  " + tail.format("09", "09", SID2),
+                          "修复解析器" + tail.format("08", "08", SID3)])
+        # 零宽连接符与组合字符不占格：e 加组合重音符是 1 格，这个标题共 8 格，和 abcdefgh 一样宽
+        self.make(self.dir_a, SID3, [user("q", ts="2026-10-01T00:00:00.000Z"), custom("abcde\u0301f\u200dgh")])
+        self.assertEqual(self.ok("sessions", env=env).out.splitlines()[1:],
+                         ["修复解析" + tail.format("10", "10", SID1), "abcdefgh" + tail.format("09", "09", SID2),
+                          "abcde\u0301f\u200dgh" + tail.format("08", "08", SID3)])
+
+    def test_cmd_writes_the_home_directory_as_a_tilde(self):
+        cases = ((os.path.join(self.home, "sub"), "cd ~/sub"), (self.home, "cd ~"), (self.home + "/", "cd ~"),
+                 (os.path.join(self.home, "my proj"), "cd ~/'my proj'"), ("/w/proj", "cd /w/proj"),
+                 (self.home + "2", "cd " + shlex.quote(self.home + "2")))
+        for cwd, expected in cases:
+            self.make(self.dir_a, SID1, [user("q", cwd=cwd), ai("T")], project=sessions.encode(cwd))
+            line = "  {} && claude-a --resume {}".format(expected, SID1)
+            self.assertEqual(self.ok("sessions", "--cmd").out.splitlines()[2], line, cwd)
+            # JSON 给脚本用，保持绝对路径；--cmd 对它没有影响
+            data = self.listing()
+            self.assertTrue(data["sessions"][0]["resume"].startswith("cd " + shlex.quote(cwd) + " && "), cwd)
+            self.assertEqual(self.listing("--cmd"), data)
+            shutil.rmtree(os.path.join(self.dir_a, "projects"))
 
     def test_t16_json_structure(self):
         path = self.make(self.dir_a, SID1, [user("q"), assistant("2026-10-01T03:30:00.000Z"), custom("Named")])
@@ -147,7 +202,7 @@ class TitleTest(SessionsTestCase):
         self.make(self.dir_a, SID1, [{"type": "mode", "mode": "x"}, {"type": "system", "cwd": "/w/proj",
                                                                     "timestamp": "2026-10-01T02:00:00.000Z"}])
         self.assertEqual((self.one()["title"], self.one()["title_source"]), ("", "none"))
-        self.assertTrue(self.ok("sessions").out.splitlines()[1].endswith(SID1 + "  -"))
+        self.assertTrue(self.ok("sessions").out.splitlines()[1].startswith("-      a  "))
 
     def test_t3_first_plain_prompt(self):
         self.make(self.dir_a, SID1, [
@@ -170,8 +225,9 @@ class TitleTest(SessionsTestCase):
         out = self.ok("sessions").out
         self.assertNotIn("\x1b", out)
         self.assertNotIn("\x07", out)
-        self.assertEqual(len(out.splitlines()), 3)
-        shown = out.splitlines()[1].split(SID1 + "  ", 1)[1]
+        self.assertEqual(len(out.splitlines()), 2)
+        # 标题在第一列；清洗后的标题里没有连续空格，按列间的两个空格切开即可
+        shown = out.splitlines()[1].split("  a  ", 1)[0]
         self.assertEqual(len(shown), 61)
         self.assertTrue(shown.endswith("…"))
 
@@ -193,7 +249,7 @@ class TitleTest(SessionsTestCase):
         self.make(self.dir_a, SID1, [user("q", cwd=cwd), custom(title)], project=sessions.encode(cwd))
         row = self.one()
         self.assertEqual((row["title"], row["directory"]), (title, cwd))
-        self.assertIn("cd '{}' && claude-a --resume {}".format(cwd, SID1), self.ok("sessions").out)
+        self.assertIn("cd '{}' && claude-a --resume {}".format(cwd, SID1), self.ok("sessions", "--cmd").out)
 
     def test_t6_title_only_near_the_start(self):
         # 标题行在首条提问之前、又被挤出尾部窗口：靠头部扫描取到
@@ -231,7 +287,8 @@ class FieldFallbackTest(SessionsTestCase):
     def test_t5c_cwd_with_a_newline_is_not_used(self):
         self.make(self.dir_a, SID1, [user("q", cwd="/w/pr\noj"), assistant("2026-10-01T05:00:00.000Z"), ai("T")])
         self.assertIsNone(self.one()["directory"])
-        self.assertEqual(len(self.ok("sessions").out.splitlines()), 3)
+        self.assertEqual(len(self.ok("sessions").out.splitlines()), 2)
+        self.assertEqual(len(self.ok("sessions", "--cmd").out.splitlines()), 3)
 
     def test_t7_missing_fields_bad_lines_and_half_line(self):
         self.make(self.dir_a, SID1, [b"not json\n", b"[1, 2]\n", {"type": "mode", "mode": "x"}, ai("Only a title")],
@@ -242,9 +299,13 @@ class FieldFallbackTest(SessionsTestCase):
         self.assertEqual(row["created"], None)
         self.assertEqual(row["updated"], "2026-09-21T14:13:20Z")
         self.assertEqual(row["resume"], "claude-a --resume " + SID1)
-        out = self.ok("sessions").out.splitlines()
-        self.assertEqual(out[2], "  claude-a --resume {}  (start directory unknown; project -w-proj)".format(SID1))
+        unknown = "claude-a --resume {}  (start directory unknown; project -w-proj)".format(SID1)
+        out = self.ok("sessions", "--cmd", env={"COLUMNS": "40"}).out.splitlines()
+        self.assertEqual(out[2], "  " + unknown)
         self.assertIn("  -  ", out[1])
+        self.assertTrue(self.ok("sessions", "--cmd", env={"COLUMNS": "300"}).out.splitlines()[1].endswith("  " + unknown))
+        # 不带 --cmd 时没有命令，这段说明也不出现
+        self.assertNotIn("start directory unknown", self.ok("sessions").out)
 
     def test_t7b_deeply_nested_line_is_skipped(self):
         # 嵌套太深的行让 json 抛 RecursionError（不是 ValueError）；它只是一条坏行，别的字段照常取
@@ -260,9 +321,9 @@ class FieldFallbackTest(SessionsTestCase):
         for zone, sid in (("America/New_York", SID1), ("Asia/Shanghai", SID2), ("UTC", None)):
             result = self.ok("sessions", env={"TZ": zone})
             self.assertNotIn("Traceback", result.err)
-            self.assertEqual(len(result.out.splitlines()), 5, result)
+            self.assertEqual(len(result.out.splitlines()), 3, result)
             # 换算不了的时间显示 -（这两条会话的创建与更新时间是同一个值）；UTC 下两条都能显示
-            dashed = [line.split()[3] for line in result.out.splitlines() if line.split()[1:3] == ["-", "-"]]
+            dashed = [line.split()[4] for line in result.out.splitlines() if line.split()[2:4] == ["-", "-"]]
             self.assertEqual(dashed, [sid] if sid else [], result)
         self.assertEqual(len(self.listing()["sessions"]), 2)
 
@@ -375,9 +436,10 @@ class FilterTest(SessionsTestCase):
         data = self.listing("--limit", "1")
         self.assertEqual(([row["session_id"] for row in data["sessions"]], data["total"]), ([SID2], 3))
         out = self.ok("sessions", "--limit", "1").out.splitlines()
-        self.assertEqual(len(out), 4)
+        self.assertEqual(len(out), 3)
         self.assertEqual(out[-1], "showing 1 of 3 sessions; use --limit 0 for all, or --grep TEXT to narrow")
-        self.assertEqual(len(self.ok("sessions", "--limit", "0").out.splitlines()), 7)
+        self.assertEqual(len(self.ok("sessions", "--limit", "0").out.splitlines()), 4)
+        self.assertEqual(len(self.ok("sessions", "--limit", "0", "--cmd").out.splitlines()), 7)
         result = self.run_cli("sessions", "--limit", "-1")
         self.assertEqual(result.code, 2)
         self.assertIn("--limit must be 0 or more", result.err)
@@ -387,7 +449,7 @@ class FilterTest(SessionsTestCase):
         for index in range(28):
             self.make(self.dir_b, "44444444-aaaa-bbbb-cccc-0000000000{:02d}".format(index), [user("q")])
         out = self.ok("sessions").out.splitlines()
-        self.assertEqual(len(out), 1 + 30 * 2 + 1)
+        self.assertEqual(len(out), 1 + 30 + 1)
         self.assertEqual(out[-1], "showing 30 of 31 sessions; use --limit 0 for all, or --grep TEXT to narrow")
         self.assertEqual(len(self.listing()["sessions"]), 31)
 

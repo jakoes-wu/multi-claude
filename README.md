@@ -306,17 +306,20 @@ old    keychain  token expired  -       inherit                no      -        
 
 ### Finding a session
 
-Forgot which account or which directory a session was started in? `sessions` lists the sessions of every account and every project directory, newest first, each followed by the command that resumes it:
+Forgot which account or which directory a session was started in? `sessions` lists the sessions of every account and every project directory, newest first; `--cmd` adds the command that resumes each one:
 
 ```sh
 multi-claude sessions
-# ACCOUNT  UPDATED           CREATED           SESSION ID                            TITLE
-# work     2026-10-11 17:42  2026-10-11 16:05  3c588340-1219-48df-a231-509866789487  Fix the importer
-#   cd /path/to/project && claude-work --resume 3c588340-1219-48df-a231-509866789487
+# TITLE             ACCOUNT  CREATED           UPDATED           SESSION ID
+# Fix the importer  work     2026-10-11 16:05  2026-10-11 17:42  3c588340-1219-48df-a231-509866789487
 multi-claude sessions work            # one account
 multi-claude sessions --grep importer # title, directory or session id contains the text
+multi-claude sessions --grep importer --cmd
+# TITLE             ACCOUNT  CREATED           UPDATED           SESSION ID                            CMD
+# Fix the importer  work     2026-10-11 16:05  2026-10-11 17:42  3c588340-1219-48df-a231-509866789487  cd ~/project && claude-work --resume 3c588340-1219-48df-a231-509866789487
 ```
 
+- `--cmd` puts the resume command in a `CMD` column when the whole table fits the width of the terminal; otherwise each command goes on its own line below its session. The home directory is written as `~`. When the output is piped, the width counts as 80 columns unless `COLUMNS` is set.
 - It shows the 30 most recent sessions; `--limit N` changes that and `--limit 0` shows all. `--json` prints every match with the full fields (`directory`, `created`, `updated`, `title_source`, `file`, `resume`). `conversations` is another name for the same command.
 - The title is the session's name in Claude Code; a session without one shows the beginning of its first prompt, and `-` if it has no prompt at all. Times are local. `UPDATED` is the time of the last message, or the file's modification time when the session has no timestamps.
 - A `~/.claude` that has not been turned into an account is listed as `default`.
@@ -446,7 +449,7 @@ There is no command that switches which account plain `claude` uses. Besides `~/
 
 ### Which account or directory was that session in?
 
-`multi-claude sessions --grep TEXT` searches the titles, directories and ids of the sessions of all accounts and prints the command that resumes each match. See [Finding a session](#finding-a-session).
+`multi-claude sessions --grep TEXT` searches the titles, directories and ids of the sessions of all accounts; add `--cmd` to print the command that resumes each match. See [Finding a session](#finding-a-session).
 
 ### How do I continue a conversation with another account?
 
@@ -495,7 +498,7 @@ It never copies, exports, uploads or backs up a login. One command touches one: 
 | `multi-claude path NAME` | Print the account's directory. |
 | `multi-claude code NAME [PATH] [-- ARGS ...]` | Open a separate VS Code instance with the account's environment (experimental). |
 | `multi-claude handoff TARGET [--from NAME] [--session ID] [--force]` | Copy a session to another account and print the command that resumes it there. |
-| `multi-claude sessions [NAME] [--grep TEXT] [--limit N] [--json]` | List the sessions of every account and directory, newest first, with the command that resumes each. Also `conversations`. |
+| `multi-claude sessions [NAME] [--grep TEXT] [--limit N] [--cmd] [--json]` | List the sessions of every account and directory, newest first; `--cmd` adds the command that resumes each. Also `conversations`. |
 | `multi-claude statusline install\|uninstall FILE` | Wrap the statusLine command in a settings file so that `usage` gets fresh numbers, or restore it. |
 | `multi-claude completion bash\|zsh\|fish` | Print a shell completion script. |
 
