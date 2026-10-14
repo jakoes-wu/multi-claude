@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-10-13
+
 ### Changed
 
 - `sessions --cmd` no longer shows the `SESSION ID` column: the resume
@@ -311,7 +313,8 @@ First release (macOS and Linux).
   program (`.../@anthropic-ai/claude-code/bin/claude.exe`) and the Linux
   systemd user service of the background supervisor.
 
-[Unreleased]: https://github.com/jakoes-wu/multi-claude/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/jakoes-wu/multi-claude/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/jakoes-wu/multi-claude/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/jakoes-wu/multi-claude/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/jakoes-wu/multi-claude/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/jakoes-wu/multi-claude/compare/v0.9.0...v0.9.1
