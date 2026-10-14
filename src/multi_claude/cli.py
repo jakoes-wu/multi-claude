@@ -291,7 +291,8 @@ def build_parser() -> argparse.ArgumentParser:
                             help="show at most N sessions, 0 for all (default: 30, or all with --json)")
     p_sessions.add_argument("--cmd", action="store_true",
                             help="also print the command that resumes each session (a CMD column when the "
-                                 "terminal is wide enough, otherwise a line below each session)")
+                                 "terminal is wide enough, otherwise a line below each session); the SESSION ID "
+                                 "column is then left out, since the command contains the id")
     p_sessions.add_argument("--json", action="store_true", help="print machine-readable JSON")
     return parser
 
@@ -1844,6 +1845,10 @@ def cmd_sessions(name: Optional[str], grep: Optional[str], limit: Optional[int],
         for line in _aligned([header] + rows):
             print(line)
     else:
+        # 续聊命令里总有 --resume <会话ID>（目录未知时也有），带 --cmd 时两种排版都去掉 SESSION ID 列，
+        # 免得同一串 ID 在一条会话里出现两次；不带 --cmd 时它是唯一能看到 ID 的地方，必须保留。
+        header = header[:-1]
+        rows = [row[:-1] for row in rows]
         # 续聊命令很长：整张表（表头与数据行，不含末尾的截断提示）放得下终端宽度才并成 CMD 列，
         # 否则命令在窄终端里会从中间折行，比单独一行更难读、也更难复制。按整张表决定，不逐行切换。
         wide = _aligned([header + ["CMD"]] + [row + [command] for row, command in zip(rows, commands)])
