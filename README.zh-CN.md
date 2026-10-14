@@ -306,17 +306,20 @@ old    keychain  token expired  -       inherit                no      -        
 
 ### 查找会话
 
-记不清某条会话是在哪个账号、哪个目录下开的？`sessions` 列出所有账号、所有项目目录下的会话，最近更新的在前，每条下面附一条续聊命令：
+记不清某条会话是在哪个账号、哪个目录下开的？`sessions` 列出所有账号、所有项目目录下的会话，最近更新的在前；加 `--cmd` 再附上每条会话的续聊命令：
 
 ```sh
 multi-claude sessions
-# ACCOUNT  UPDATED           CREATED           SESSION ID                            TITLE
-# work     2026-10-11 17:42  2026-10-11 16:05  3c588340-1219-48df-a231-509866789487  Fix the importer
-#   cd /path/to/project && claude-work --resume 3c588340-1219-48df-a231-509866789487
+# TITLE             ACCOUNT  CREATED           UPDATED           SESSION ID
+# Fix the importer  work     2026-10-11 16:05  2026-10-11 17:42  3c588340-1219-48df-a231-509866789487
 multi-claude sessions work            # 只看一个账号
 multi-claude sessions --grep importer # 名称、目录或会话 ID 里含这段文字
+multi-claude sessions --grep importer --cmd
+# TITLE             ACCOUNT  CREATED           UPDATED           SESSION ID                            CMD
+# Fix the importer  work     2026-10-11 16:05  2026-10-11 17:42  3c588340-1219-48df-a231-509866789487  cd ~/project && claude-work --resume 3c588340-1219-48df-a231-509866789487
 ```
 
+- 加 `--cmd` 时，整张表放得下终端宽度，续聊命令就放在 `CMD` 列；放不下，每条命令单独一行，排在对应会话下面。主目录写成 `~`。输出接管道时宽度按 80 列算，除非设了 `COLUMNS`。
 - 默认显示最近的 30 条；`--limit N` 可以改，`--limit 0` 显示全部。`--json` 输出全部匹配的会话和完整字段（`directory`、`created`、`updated`、`title_source`、`file`、`resume`）。`conversations` 是同一个命令的另一个名字。
 - 名称是会话在 Claude Code 里的标题；没有标题的会话显示首条提问的开头，连提问都没有的显示 `-`。时间是本地时间，`UPDATED` 是最后一条消息的时间，会话里没有时间戳时用文件的修改时间。
 - 还没有迁移成账号的 `~/.claude` 显示为 `default`。
@@ -446,7 +449,7 @@ multi-claude remove main         # 注销账号
 
 ### 某条会话是在哪个账号、哪个目录下开的？
 
-`multi-claude sessions --grep 文字` 在所有账号的会话里按名称、目录和会话 ID 查找，并给出每条匹配会话的续聊命令。见[查找会话](#查找会话)。
+`multi-claude sessions --grep 文字` 在所有账号的会话里按名称、目录和会话 ID 查找，加 `--cmd` 再给出每条匹配会话的续聊命令。见[查找会话](#查找会话)。
 
 ### 怎么把对话交给另一个账号继续？
 
@@ -495,7 +498,7 @@ multi-claude remove main         # 注销账号
 | `multi-claude path 名称` | 打印账号目录 |
 | `multi-claude code 名称 [路径] [-- 参数 ...]` | 以账号环境打开一个独立的 VS Code 实例（实验功能） |
 | `multi-claude handoff 目标 [--from 名称] [--session ID] [--force]` | 把一条会话复制到另一个账号，并打印在那边续聊的命令 |
-| `multi-claude sessions [名称] [--grep 文字] [--limit N] [--json]` | 列出所有账号、所有目录下的会话，最近更新的在前，并附续聊命令；也可写成 `conversations` |
+| `multi-claude sessions [名称] [--grep 文字] [--limit N] [--cmd] [--json]` | 列出所有账号、所有目录下的会话，最近更新的在前；加 `--cmd` 再附续聊命令；也可写成 `conversations` |
 | `multi-claude statusline install\|uninstall 文件` | 包装设置文件里的 statusLine 命令，让 `usage` 拿到更新的数值；或还原它 |
 | `multi-claude completion bash\|zsh\|fish` | 输出 shell 补全脚本 |
 

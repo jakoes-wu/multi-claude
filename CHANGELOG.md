@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- `sessions` prints one line per session with the columns `TITLE`, `ACCOUNT`,
+  `CREATED`, `UPDATED`, `SESSION ID`, aligned by display width so that CJK
+  titles keep the columns straight. The resume command is no longer printed
+  by default: `sessions --cmd` adds it, as a `CMD` column when the table fits
+  the terminal and as a line below each session otherwise, with the home
+  directory written as `~`. `--json` is unchanged.
+
 ## [0.10.0] - 2026-10-11
 
 ### Added

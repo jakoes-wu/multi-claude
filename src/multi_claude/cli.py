@@ -15,6 +15,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import List, NamedTuple, Optional, Tuple
 
@@ -279,15 +280,18 @@ def build_parser() -> argparse.ArgumentParser:
     _add_dry_run(p_handoff)
 
     p_sessions = sub.add_parser("sessions", description="list the Claude sessions of every account and every directory, "
-                                                 "newest first, each with the command that resumes it "
+                                                 "newest first; --cmd adds the command that resumes each "
                                                  "(read-only; also available as `conversations`): "
-                                                 "sessions [NAME] [--grep TEXT] [--limit N] [--json]")
+                                                 "sessions [NAME] [--grep TEXT] [--limit N] [--cmd] [--json]")
     p_sessions.add_argument("name", nargs="?", metavar="NAME",
                             help="only this account (`default` is the unregistered ~/.claude)")
     p_sessions.add_argument("--grep", metavar="TEXT",
                             help="only sessions whose title, directory or id contains TEXT (case-insensitive)")
     p_sessions.add_argument("--limit", type=int, metavar="N",
                             help="show at most N sessions, 0 for all (default: 30, or all with --json)")
+    p_sessions.add_argument("--cmd", action="store_true",
+                            help="also print the command that resumes each session (a CMD column when the "
+                                 "terminal is wide enough, otherwise a line below each session)")
     p_sessions.add_argument("--json", action="store_true", help="print machine-readable JSON")
     return parser
 
@@ -427,7 +431,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             return cmd_usage(args.name, args.json)
         if args.command == "sessions":
             # 只读：不加写锁，迁移未完成时也放行（与 list、usage 相同）。
-            return cmd_sessions(args.name, args.grep, args.limit, args.json)
+            return cmd_sessions(args.name, args.grep, args.limit, args.json, args.cmd)
         if args.command == "which":
             return cmd_which(args.path)
         if args.command == "statusline":
@@ -1767,8 +1771,11 @@ def _session_sources(config: Config, exists: bool) -> List[_SessionSource]:
     return sources
 
 
-def cmd_sessions(name: Optional[str], grep: Optional[str], limit: Optional[int], as_json: bool) -> int:
-    """只读列出各账号、各目录的会话，最近更新的在前，每条附续聊命令（方案 feature-session-list）。
+def cmd_sessions(name: Optional[str], grep: Optional[str], limit: Optional[int], as_json: bool,
+                 show_cmd: bool = False) -> int:
+    """只读列出各账号、各目录的会话，最近更新的在前（方案 feature-session-list、feature-sessions-cmd-column）。
+
+    show_cmd 只影响文本输出：为真时才打印续聊命令。JSON 输出始终带 resume 字段，不受它影响。
 
     会把会话标题或首条提问的开头打印出来（这是对话内容的片段），不保存、不联网、不读凭据。
     同一会话 ID 在多个账号里各有一份时（handoff 复制过）各列一行，不合并。
@@ -1821,31 +1828,91 @@ def cmd_sessions(name: Optional[str], grep: Optional[str], limit: Optional[int],
     if not entries:
         print("no sessions found")
         return accounts.EXIT_OK
-    # 不用 _print_table：每条会话下面要插一行续聊命令。标题放最后一列，中文标题的显示宽度不影响前面各列对齐。
-    rows = [("ACCOUNT", "UPDATED", "CREATED", "SESSION ID", "TITLE", None)]
+    # 不用 _print_table：标题在第一列且可能是中文，要按终端显示宽度对齐；带 --cmd 时还要在两种排版之间选。
+    header = ["TITLE", "ACCOUNT", "CREATED", "UPDATED", "SESSION ID"]
+    rows = []
+    commands = []
     for source, session, full_title in entries:
-        resume = _resume_command(source, session)
+        rows.append([sessions.clean_title(full_title, _TITLE_TEXT_CHARS) or "-", source.name,
+                     _local_minute(session.created), _local_minute(session.updated), session.session_id])
+        resume = _resume_command(source, session, tilde=True)
         if session.directory is None:
             resume += "  (start directory unknown; project {})".format(
                 sessions.clean_title(session.project, len(session.project)))
-        rows.append((source.name, _local_minute(session.updated), _local_minute(session.created), session.session_id,
-                     sessions.clean_title(full_title, _TITLE_TEXT_CHARS) or "-", resume))
-    widths = [max(len(row[index]) for row in rows) for index in range(4)]
-    for row in rows:
-        print("  ".join([cell.ljust(width) for cell, width in zip(row[:4], widths)] + [row[4]]).rstrip())
-        if row[5] is not None:
-            print("  " + row[5])
+        commands.append(resume)
+    if not show_cmd:
+        for line in _aligned([header] + rows):
+            print(line)
+    else:
+        # 续聊命令很长：整张表（表头与数据行，不含末尾的截断提示）放得下终端宽度才并成 CMD 列，
+        # 否则命令在窄终端里会从中间折行，比单独一行更难读、也更难复制。按整张表决定，不逐行切换。
+        wide = _aligned([header + ["CMD"]] + [row + [command] for row, command in zip(rows, commands)])
+        if max(_display_width(line) for line in wide) <= shutil.get_terminal_size((80, 24)).columns:
+            for line in wide:
+                print(line)
+        else:
+            narrow = _aligned([header] + rows)
+            print(narrow[0])
+            for line, command in zip(narrow[1:], commands):
+                print(line)
+                print("  " + command)
     if total > len(entries):
         print("showing {} of {} sessions; use --limit 0 for all, or --grep TEXT to narrow".format(len(entries), total))
     return accounts.EXIT_OK
 
 
-def _resume_command(source: _SessionSource, session: sessions.SessionInfo) -> str:
-    """续聊命令。Claude 按当前目录找会话，所以先 cd 到会话启动时的目录；目录未知时只给后半段。"""
+def _resume_command(source: _SessionSource, session: sessions.SessionInfo, tilde: bool = False) -> str:
+    """续聊命令。Claude 按当前目录找会话，所以先 cd 到会话启动时的目录；目录未知时只给后半段。
+
+    tilde 为真时把主目录写成 ~，只用于给人看的文本输出；JSON 的 resume 字段保持绝对路径。
+    """
     resume = "{} --resume {}".format(source.launcher, session.session_id)
     if session.directory is None:
         return resume
-    return "cd {} && {}".format(shlex.quote(session.directory), resume)
+    target = _tilde_path(session.directory) if tilde else shlex.quote(session.directory)
+    return "cd {} && {}".format(target, resume)
+
+
+def _tilde_path(directory: str) -> str:
+    """把主目录之下的目录写成 ~/…，可直接拼在 cd 后面；不在主目录之下时与 shlex.quote 相同。
+
+    按字符串前缀比较，不解析软链：会话里记的是当时的目录原文。
+    """
+    home = os.path.expanduser("~")
+    if not os.path.isabs(home) or home == os.sep:
+        return shlex.quote(directory)
+    if directory == home:
+        return "~"
+    if not directory.startswith(home + os.sep):
+        return shlex.quote(directory)
+    rest = directory[len(home) + 1:]
+    # 波浪号必须留在引号外面，放进引号里 shell 不会把它展开成主目录
+    return "~/" + shlex.quote(rest) if rest else "~"
+
+
+def _display_width(text: str) -> int:
+    """文字在终端里占的格数：中日韩等宽字符占 2 格，组合字符和零宽连接符不占格。
+
+    表情符号的组合序列在不同终端里宽度不一，这里可能差一格。
+    """
+    width = 0
+    for char in text:
+        # U+200C、U+200D 是 clean_title 特意保留的零宽字符
+        if char in "\u200c\u200d" or unicodedata.category(char) in ("Mn", "Me"):
+            continue
+        width += 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+    return width
+
+
+def _aligned(rows: List[List[str]]) -> List[str]:
+    """按显示宽度对齐各列，返回每行的文字；列间两个空格，最后一列不补空格。"""
+    widths = [max(_display_width(row[index]) for row in rows) for index in range(len(rows[0]))]
+    lines = []
+    for row in rows:
+        # str.ljust 按字符数补空格，中文标题会少补；这里按显示宽度补
+        cells = [cell + " " * (width - _display_width(cell)) for cell, width in zip(row, widths)]
+        lines.append("  ".join(cells).rstrip())
+    return lines
 
 
 def _local_minute(moment: Optional[datetime]) -> str:
