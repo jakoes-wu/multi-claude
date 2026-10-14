@@ -315,11 +315,11 @@ multi-claude sessions
 multi-claude sessions work            # one account
 multi-claude sessions --grep importer # title, directory or session id contains the text
 multi-claude sessions --grep importer --cmd
-# TITLE             ACCOUNT  CREATED           UPDATED           SESSION ID                            CMD
-# Fix the importer  work     2026-10-11 16:05  2026-10-11 17:42  3c588340-1219-48df-a231-509866789487  cd ~/project && claude-work --resume 3c588340-1219-48df-a231-509866789487
+# TITLE             ACCOUNT  CREATED           UPDATED           CMD
+# Fix the importer  work     2026-10-11 16:05  2026-10-11 17:42  cd ~/project && claude-work --resume 3c588340-1219-48df-a231-509866789487
 ```
 
-- `--cmd` puts the resume command in a `CMD` column when the whole table fits the width of the terminal; otherwise each command goes on its own line below its session. The home directory is written as `~`. When the output is piped, the width counts as 80 columns unless `COLUMNS` is set.
+- `--cmd` puts the resume command in a `CMD` column when the whole table fits the width of the terminal; otherwise each command goes on its own line below its session. The `SESSION ID` column is left out, since each command ends with the session id. The home directory is written as `~`. When the output is piped, the width counts as 80 columns unless `COLUMNS` is set.
 - It shows the 30 most recent sessions; `--limit N` changes that and `--limit 0` shows all. `--json` prints every match with the full fields (`directory`, `created`, `updated`, `title_source`, `file`, `resume`). `conversations` is another name for the same command.
 - The title is the session's name in Claude Code; a session without one shows the beginning of its first prompt, and `-` if it has no prompt at all. Times are local. `UPDATED` is the time of the last message, or the file's modification time when the session has no timestamps.
 - A `~/.claude` that has not been turned into an account is listed as `default`.

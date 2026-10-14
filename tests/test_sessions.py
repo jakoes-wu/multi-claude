@@ -99,17 +99,18 @@ class ListingTest(SessionsTestCase):
         env = {"TZ": "Asia/Shanghai", "COLUMNS": "300"}
         wide = self.ok("sessions", "--cmd", env=env).out.splitlines()
         self.assertEqual(wide, [
-            "TITLE  ACCOUNT  CREATED           UPDATED           SESSION ID                            CMD",
-            "One    a        2026-10-01 10:00  2026-10-01 10:00  {0}  cd /w/proj && claude-a --resume {0}".format(SID1),
-            "Two    b        2026-10-01 09:00  2026-10-01 09:00  {0}  cd /w/other && claude-b --resume {0}".format(SID2)])
+            "TITLE  ACCOUNT  CREATED           UPDATED           CMD",
+            "One    a        2026-10-01 10:00  2026-10-01 10:00  cd /w/proj && claude-a --resume " + SID1,
+            "Two    b        2026-10-01 09:00  2026-10-01 09:00  cd /w/other && claude-b --resume " + SID2])
+        # 会话 ID 已在命令末尾，带 --cmd 时不再单列一次
         # 放不下时整张表改成命令单独一行；恰好放得下仍算放得下。标题与目录都是 ASCII，len 就是显示宽度
         widest = max(len(line) for line in wide)
         self.assertEqual(self.ok("sessions", "--cmd", env=dict(env, COLUMNS=str(widest))).out.splitlines(), wide)
         narrow = [
-            "TITLE  ACCOUNT  CREATED           UPDATED           SESSION ID",
-            "One    a        2026-10-01 10:00  2026-10-01 10:00  " + SID1,
+            "TITLE  ACCOUNT  CREATED           UPDATED",
+            "One    a        2026-10-01 10:00  2026-10-01 10:00",
             "  cd /w/proj && claude-a --resume " + SID1,
-            "Two    b        2026-10-01 09:00  2026-10-01 09:00  " + SID2,
+            "Two    b        2026-10-01 09:00  2026-10-01 09:00",
             "  cd /w/other && claude-b --resume " + SID2]
         self.assertEqual(self.ok("sessions", "--cmd", env=dict(env, COLUMNS=str(widest - 1))).out.splitlines(), narrow)
         self.assertEqual(self.ok("sessions", "--cmd", env=dict(env, COLUMNS="40")).out.splitlines(), narrow)

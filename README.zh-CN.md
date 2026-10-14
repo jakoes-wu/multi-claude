@@ -315,11 +315,11 @@ multi-claude sessions
 multi-claude sessions work            # 只看一个账号
 multi-claude sessions --grep importer # 名称、目录或会话 ID 里含这段文字
 multi-claude sessions --grep importer --cmd
-# TITLE             ACCOUNT  CREATED           UPDATED           SESSION ID                            CMD
-# Fix the importer  work     2026-10-11 16:05  2026-10-11 17:42  3c588340-1219-48df-a231-509866789487  cd ~/project && claude-work --resume 3c588340-1219-48df-a231-509866789487
+# TITLE             ACCOUNT  CREATED           UPDATED           CMD
+# Fix the importer  work     2026-10-11 16:05  2026-10-11 17:42  cd ~/project && claude-work --resume 3c588340-1219-48df-a231-509866789487
 ```
 
-- 加 `--cmd` 时，整张表放得下终端宽度，续聊命令就放在 `CMD` 列；放不下，每条命令单独一行，排在对应会话下面。主目录写成 `~`。输出接管道时宽度按 80 列算，除非设了 `COLUMNS`。
+- 加 `--cmd` 时，整张表放得下终端宽度，续聊命令就放在 `CMD` 列；放不下，每条命令单独一行，排在对应会话下面。命令末尾已有会话 ID，所以不再显示 `SESSION ID` 列。主目录写成 `~`。输出接管道时宽度按 80 列算，除非设了 `COLUMNS`。
 - 默认显示最近的 30 条；`--limit N` 可以改，`--limit 0` 显示全部。`--json` 输出全部匹配的会话和完整字段（`directory`、`created`、`updated`、`title_source`、`file`、`resume`）。`conversations` 是同一个命令的另一个名字。
 - 名称是会话在 Claude Code 里的标题；没有标题的会话显示首条提问的开头，连提问都没有的显示 `-`。时间是本地时间，`UPDATED` 是最后一条消息的时间，会话里没有时间戳时用文件的修改时间。
 - 还没有迁移成账号的 `~/.claude` 显示为 `default`。

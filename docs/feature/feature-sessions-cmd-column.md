@@ -1,5 +1,7 @@
 # sessions 文本输出：调整列顺序，续聊命令改为按需显示的 CMD 列
 
+> **2026-10-13 修订（v0.11.0 发布之后）**：用户确认带 `--cmd` 时不再显示 `SESSION ID` 列，单行、两行两种排版都去掉。理由：续聊命令里总有 `--resume <会话ID>`，启动目录未知时也有（`src/multi_claude/cli.py` `_resume_command`），同一串 ID 不必在一条会话里出现两次。不带 `--cmd` 时该列保留。改动只在 `cmd_sessions` 带 `--cmd` 的分支里去掉表头与各行的最后一列；下文 §2、§5.1、§8 已按修订后的行为改写。
+
 ## 1. 背景
 
 `multi-claude sessions` 的文本输出现在每条会话占两行：第一行是表格列，第二行缩进两格是续聊命令（`cli.py:1824-1838`，格式定义在 `docs/feature/feature-session-list.md` §5.2）。表格行与命令行交替出现，用户反馈排版乱。
@@ -16,7 +18,7 @@
 目标：
 
 1. 不带 `--cmd` 时，每条会话一行，五列，不显示续聊命令。
-2. 带 `--cmd` 时显示续聊命令：整张表最宽的一行不超过终端宽度时，命令作为最后一列 `CMD`；否则每条会话下面单独一行（缩进两格）。
+2. 带 `--cmd` 时显示续聊命令，并去掉 `SESSION ID` 列：整张表最宽的一行不超过终端宽度时，命令作为最后一列 `CMD`；否则每条会话下面单独一行（缩进两格）。
 3. 文本输出的续聊命令里，主目录写成 `~`。
 
 非目标：
@@ -46,6 +48,7 @@
 | `README.md`、`README.zh-CN.md` | 各自 `308-325`、`449`、`498` | 修改 | 示例与说明；`449` 的“给出续聊命令”改为带 `--cmd`；`498` 命令总表的用法串加 `[--cmd]` |
 | `docs/feature/feature-session-list.md` | `142-155` | 修改 | 文本输出格式指向本文档 |
 | `CHANGELOG.md` | `7`（`[Unreleased]`）之下 | 新增 | Changed 条目 |
+| `src/multi_claude/cli.py`（2026-10-13 修订） | `cmd_sessions` 带 `--cmd` 的分支（main `6b315c6` 的 `1846` 起）；`--cmd` 帮助文字 `292-294` | 修改 | 去掉表头与各行最后一列 `SESSION ID`；帮助文字说明该列不显示 |
 
 补全脚本不用改：`completion.py:23` 只登记位置参数，选项不在表里。
 
@@ -57,7 +60,7 @@
 
 **列与对齐**（替换 `cli.py:1824-1838`）：
 
-- 表头 `TITLE  ACCOUNT  CREATED  UPDATED  SESSION ID`，带 `--cmd` 且走单行排版时再加 `CMD`。
+- 表头 `TITLE  ACCOUNT  CREATED  UPDATED  SESSION ID`；带 `--cmd` 时去掉 `SESSION ID`，走单行排版时再加 `CMD`。
 - 每列宽度取该列各单元格显示宽度的最大值，列间两个空格，最后一列不补空格，行尾 `rstrip`。
 - 标题仍按 `_TITLE_TEXT_CHARS`（`cli.py:1754`，60 个字符）截断，空标题显示 `-`。
 
@@ -102,8 +105,8 @@
 | 编号 | 场景 | 预期 |
 | ---- | ---- | ---- |
 | R1 | 不带 `--cmd`，三条会话（改 T1） | 表头五列顺序正确；每条一行；输出里没有 `--resume` |
-| R2 | `--cmd`，`COLUMNS=300` | 表头末列为 `CMD`；每条一行，行尾是续聊命令 |
-| R3 | `--cmd`，`COLUMNS=40` | 表头无 `CMD`；每条会话下一行是 `"  " + 续聊命令` |
+| R2 | `--cmd`，`COLUMNS=300` | 表头为 `TITLE  ACCOUNT  CREATED  UPDATED  CMD`（无 `SESSION ID`）；每条一行，行尾是续聊命令 |
+| R3 | `--cmd`，`COLUMNS=40` | 表头为 `TITLE  ACCOUNT  CREATED  UPDATED`（无 `CMD`、无 `SESSION ID`）；每条会话下一行是 `"  " + 续聊命令` |
 | R4 | 标题 `修复解析`（4 字 8 格）与 `abcdefgh`（8 格）两条会话，同账号；再加标题 `修复解析器`（10 格）一条 | 整行精确断言。前两条时两行标题后都恰好两个空格，其后的格式相同；加第三条后 `abcdefgh` 行标题后是 4 个空格。标题都比表头 `TITLE`（5 格）宽，列宽由数据决定 |
 | R5 | 启动目录在 `HOME` 之下、等于 `HOME`、路径含空格（目录用测试的 `self.home` 拼，`tests/helpers.py:107-108`） | 分别为 `cd ~/sub`、`cd ~`、`cd ~/'my proj'`；JSON 的 `resume` 仍是绝对路径 |
 | R6 | 启动目录不在 `HOME` 之下 | `cd /w/proj`，与现在相同 |
