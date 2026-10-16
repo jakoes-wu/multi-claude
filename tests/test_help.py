@@ -30,6 +30,8 @@ class HelpTest(CliTestCase):
     def test_t2_subcommand_descriptions(self):
         self.assertIn("add an account, adopt an existing directory", self.ok("add", "--help").out)
         self.assertIn("sign in to an account", self.ok("login", "--help").out)
+        self.assertIn("list the artifacts published from the Claude sessions of every account",
+                      self.ok("artifacts", "--help").out)
 
 
 class BriefListTest(CliTestCase):

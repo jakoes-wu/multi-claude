@@ -19,7 +19,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import List, NamedTuple, Optional, Tuple
 
-from . import (__version__, accounts, bundle, completion, doctor, history, hook, identity, launcher, migrate,
+from . import (__version__, accounts, artifacts, bundle, completion, doctor, history, hook, identity, launcher, migrate,
                plan, platform, refresh, restore, routes, sessions, shellpath, statusline, usage)
 from .actions import LOG_PREFIX, error, info, warn
 from .config import (DEFAULT_SHARED_DIR, DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError, RouteRule,
@@ -57,6 +57,7 @@ COMMAND_GROUPS = [
         ("route, which", "choose an account by directory (launcher claude-auto)"),
         ("handoff", "copy a session to another account"),
         ("sessions", "find a session across accounts and directories"),
+        ("artifacts", "find the artifacts you published, across accounts"),
         ("mcp", "run `claude mcp` as an account"),
         ("run, path", "run any command as an account; print its directory"),
         ("code", "open VS Code for an account (experimental)"),
@@ -294,6 +295,24 @@ def build_parser() -> argparse.ArgumentParser:
                                  "terminal is wide enough, otherwise a line below each session); the SESSION ID "
                                  "column is then left out, since the command contains the id")
     p_sessions.add_argument("--json", action="store_true", help="print machine-readable JSON")
+
+    p_artifacts = sub.add_parser("artifacts", description="list the artifacts published from the Claude sessions of "
+                                                   "every account on this machine, newest first: "
+                                                   "artifacts [NAME] [--grep TEXT] [--limit N] [--path] [--cmd] [--json]")
+    p_artifacts.add_argument("name", nargs="?", metavar="NAME",
+                             help="only artifacts owned by this account (`default` is the unregistered ~/.claude)")
+    p_artifacts.add_argument("--grep", metavar="TEXT",
+                             help="only artifacts whose title, description, URL, directory, source file or session "
+                                  "id contains TEXT (case-insensitive)")
+    p_artifacts.add_argument("--limit", type=int, metavar="N",
+                             help="show at most N artifacts, 0 for all (default: 30, or all with --json)")
+    p_artifacts.add_argument("--cmd", action="store_true",
+                             help="also print, below each artifact, the command that resumes the session that "
+                                  "published it")
+    p_artifacts.add_argument("--path", action="store_true",
+                             help="also print, below each artifact, the local file it was published from, marked "
+                                  "(missing) when it no longer exists")
+    p_artifacts.add_argument("--json", action="store_true", help="print machine-readable JSON")
     return parser
 
 
@@ -433,6 +452,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.command == "sessions":
             # 只读：不加写锁，迁移未完成时也放行（与 list、usage 相同）。
             return cmd_sessions(args.name, args.grep, args.limit, args.json, args.cmd)
+        if args.command == "artifacts":
+            # 只读：不加写锁，迁移未完成时也放行（与 sessions 相同）。
+            return cmd_artifacts(args.name, args.grep, args.limit, args.json, args.cmd, args.path)
         if args.command == "which":
             return cmd_which(args.path)
         if args.command == "statusline":
@@ -1737,6 +1759,13 @@ def cmd_handoff(target_name: str, source_name: Optional[str], session_id: Option
             handoff.session_id, source.name, target.name, handoff.target_dir))
         for backup in backups:
             info("backup: {}".format(backup))
+        # 交接记录只供 artifacts 判断归属（方案 feature-artifact-list §5.1.2）。会话已复制成功，写不进去只警告，
+        # 不改退出码；但缺了这一环，artifacts 可能把这个会话里的发布判给错误的账号，警告里要说出来。
+        try:
+            artifacts.record_handoff(handoff, accounts.account_dir(config, source.name), target_dir)
+        except (OSError, ValueError) as exc:
+            warn("could not record the handoff in {}: {}; artifacts may show the wrong owner for this session".format(
+                artifacts.log_path(), exc))
     info("continue with: {}".format(resume))
     return accounts.EXIT_OK
 
@@ -1864,6 +1893,129 @@ def cmd_sessions(name: Optional[str], grep: Optional[str], limit: Optional[int],
     if total > len(entries):
         print("showing {} of {} sessions; use --limit 0 for all, or --grep TEXT to narrow".format(len(entries), total))
     return accounts.EXIT_OK
+
+
+_ARTIFACTS_TEXT_LIMIT = 30
+_UNCERTAIN_NOTE = "? = owner unknown: the session was copied with handoff before multi-claude recorded handoffs"
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def cmd_artifacts(name: Optional[str], grep: Optional[str], limit: Optional[int], as_json: bool,
+                  show_cmd: bool = False, show_path: bool = False) -> int:
+    """只读列出本机各账号会话里发布过的 artifact，最近发布的在前（方案 feature-artifact-list）。
+
+    归属判定要看到所有副本，所以无论 NAME 是什么都扫全部账号目录，最后才按 NAME 过滤。
+    会打印 artifact 标题、说明和源文件路径（来自会话内容），不保存、不联网、不读凭据。
+    show_cmd、show_path 只影响文本输出；JSON 始终带 resume、path、path_exists。
+    """
+    if limit is not None and limit < 0:
+        raise UsageError("--limit must be 0 or more")
+    config, exists = load_config()
+    sources = _session_sources(config, exists)
+    wanted: Optional[_SessionSource] = None
+    if name is not None:
+        # 名字校验与“未登记”判定同 cmd_sessions
+        _checked_name(name)
+        account = config.find(name) if exists else None
+        if account is not None:
+            wanted = next(source for source in sources if source.registered and source.name == account.name)
+        elif name.casefold() == _UNREGISTERED_DEFAULT and any(not source.registered for source in sources):
+            wanted = next(source for source in sources if not source.registered)
+        else:
+            error("account {!r} is not registered".format(name))
+            return accounts.EXIT_ERROR
+    by_name = {source.name: source for source in sources}
+    try:
+        found, skipped, bad_lines = artifacts.collect([(source.name, source.directory) for source in sources])
+    except OSError as exc:
+        # 交接记录文件读不了：不猜归属，整体报错（列出来的归属会是错的）
+        error("could not read {}: {}".format(artifacts.log_path(), exc), phase="artifacts")
+        return accounts.EXIT_ERROR
+    needle = grep.casefold() if grep else None
+    entries = []
+    for artifact in found:
+        if wanted is not None and wanted.name not in artifact.accounts:
+            # uncertain 时 accounts 是所有有副本的账号，正好是“所有者不确定且该账号有副本”
+            continue
+        publish = artifact.representative.publish
+        if needle is not None and not any(needle in text.casefold() for text in (
+                artifact.title, artifact.description, artifact.url, publish.cwd or publish.project,
+                publish.path or "", publish.session_id)):
+            continue
+        entries.append(artifact)
+    entries.sort(key=lambda artifact: (-artifacts._time_key(artifact.last_published), artifact.url))
+    total = len(entries)
+    if limit is None:
+        limit = 0 if as_json else _ARTIFACTS_TEXT_LIMIT
+    if limit:
+        entries = entries[:limit]
+    if skipped:
+        warn("skipped {} session file(s) that could not be read".format(skipped))
+    if bad_lines:
+        warn("ignored {} unreadable line(s) in {}".format(bad_lines, artifacts.log_path()))
+    if as_json:
+        _print_json({"schema_version": 1, "artifacts": [_artifact_json(artifact, by_name) for artifact in entries],
+                     "total": total, "skipped": skipped})
+        return accounts.EXIT_OK
+    if not entries:
+        print("no artifacts found")
+        return accounts.EXIT_OK
+    rows = [["TITLE", "ACCOUNT", "UPDATED", "URL"]]
+    for artifact in entries:
+        owner = ",".join(artifact.accounts)
+        if artifact.ownership == artifacts.OWNERSHIP_UNCERTAIN:
+            owner += " ?"
+        rows.append([sessions.clean_title(artifact.title, _TITLE_TEXT_CHARS) or "-", owner,
+                     _local_minute(artifact.last_published), artifact.url])
+    lines = _aligned(rows)
+    print(lines[0])
+    for line, artifact in zip(lines[1:], entries):
+        print(line)
+        if show_path:
+            # 路径来自会话内容，过 clean_title 去掉控制字符；源文件多在临时 scratchpad 里，常已被清掉
+            source_path = artifact.representative.publish.path
+            if source_path is None:
+                print("  (no source file)")
+            else:
+                print("  " + sessions.clean_title(source_path, len(source_path))
+                      + ("" if os.path.isfile(source_path) else "  (missing)"))
+        if show_cmd:
+            # URL 列已经很宽，不像 sessions --cmd 那样尝试并成一列，命令一律单独一行
+            print("  " + _artifact_resume(artifact, by_name, tilde=True))
+    if any(artifact.ownership == artifacts.OWNERSHIP_UNCERTAIN for artifact in entries):
+        print(_UNCERTAIN_NOTE)
+    if total > len(entries):
+        print("showing {} of {} artifacts; use --limit 0 for all, or --grep TEXT to narrow".format(
+            len(entries), total))
+    return accounts.EXIT_OK
+
+
+def _artifact_resume(artifact: "artifacts.Artifact", by_name: dict, tilde: bool = False) -> str:
+    """代表副本所在会话的续聊命令；子代理里发布的，续的是父会话。"""
+    copy = artifact.representative
+    publish = copy.publish
+    source = by_name[copy.account]
+    # _resume_command 只读 session_id 与 directory，其余字段按真实值填，不编造
+    main_file = os.path.join(source.directory, "projects", publish.project, publish.session_id + ".jsonl")
+    session = sessions.SessionInfo(publish.session_id, publish.cwd, publish.project, "", sessions.TITLE_NONE, None,
+                                   artifact.last_published or _EPOCH, main_file)
+    resume = _resume_command(source, session, tilde=tilde)
+    if publish.cwd is None and tilde:
+        resume += "  (start directory unknown; project {})".format(
+            sessions.clean_title(publish.project, len(publish.project)))
+    return resume
+
+
+def _artifact_json(artifact: "artifacts.Artifact", by_name: dict) -> dict:
+    publish = artifact.representative.publish
+    return {"url": artifact.url, "title": sessions.clean_title(artifact.title, _TITLE_JSON_CHARS),
+            "description": sessions.clean_title(artifact.description, _TITLE_JSON_CHARS),
+            "accounts": artifact.accounts, "ownership": artifact.ownership,
+            "first_published": _iso(artifact.first_published), "last_published": _iso(artifact.last_published),
+            "publishes": artifact.publishes, "directory": publish.cwd, "project": publish.project,
+            "session_id": publish.session_id, "path": publish.path,
+            "path_exists": bool(publish.path) and os.path.isfile(publish.path), "audience": publish.audience,
+            "resume": _artifact_resume(artifact, by_name)}
 
 
 def _resume_command(source: _SessionSource, session: sessions.SessionInfo, tilde: bool = False) -> str:

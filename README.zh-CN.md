@@ -327,6 +327,29 @@ multi-claude sessions --grep importer --cmd
 - 这个命令只读，只在本机运行：它读每个会话文件的开头和结尾，把名称（你对话内容的一小段）打印到终端，不保存也不发往任何地方。不列子代理记录。
 - 会话启动时的目录已经不存在时，续聊命令里的 `cd` 会失败；`claude --resume` 只能在会话启动的那个目录里找到它。
 
+### 查找 artifact
+
+在某个账号里发布过 artifact，却记不清是哪个账号、源文件在哪？`artifacts` 列出本机所有账号的 Claude 会话里发布过的 artifact，最近发布的在前：
+
+```sh
+multi-claude artifacts
+# TITLE           ACCOUNT  UPDATED           URL
+# Release notes   work     2026-10-15 09:12  https://claude.ai/artifact/9GwmwTUZsiSYKj4fLD7XdB
+multi-claude artifacts work               # 只看某个账号名下的
+multi-claude artifacts --grep release     # 标题、说明、URL、目录、源文件或会话 ID 含这段文字
+multi-claude artifacts --grep release --cmd   # 每条下面再附续聊命令
+multi-claude artifacts --path             # 每条下面附发布时的本地源文件
+# Release notes   work     2026-10-15 09:12  https://claude.ai/artifact/9GwmwTUZsiSYKj4fLD7XdB
+#   /private/tmp/claude-501/…/scratchpad/notes.html  (missing)
+multi-claude artifacts --json             # 全部匹配：源文件（path、path_exists）、会话、发布次数等
+```
+
+- 账号指发布这个 artifact 的会话所在的账号。用 `handoff` 复制过的会话，复制前的发布在两个账号里都有；所以 `handoff` 每复制一次都记入 `~/.config/multi-claude/handoffs.jsonl`（文件名、大小和 SHA-256，不含内容），`artifacts` 据此把这些发布归回来源账号。
+- `a,b ?` 表示判断不出所有者：会话是在 multi-claude 开始记录交接之前复制的（0.12.0 之前，或升级后第一次 `handoff` 之前），或者记录没能写入，或者副本开头已不是当初复制过去的内容。这样的 artifact 在每个有副本的账号下都会列出。
+- 只能找到本机 Claude Code 会话里发布的：在 claude.ai 网页或桌面端发布的、会话已删的都找不到。不读 `handoff --force` 留下的备份。`migrate-default` 之前对 `~/.claude` 的交接记录，迁移后对应不上新账号。
+- 源文件通常在 Claude 的临时 scratchpad 里，常常已经不在：`--path` 会标出 `(missing)`，`--json` 的 `path_exists` 同样说明。发布时没有本地文件的显示 `(no source file)`。`--path` 与 `--cmd` 同时给时，路径在前。
+- 默认显示最近的 30 条；`--limit N` 可以改，`--limit 0` 显示全部。这个命令只读，只在本机运行：它读会话文件，把会话里的标题、说明和路径打印出来，不保存也不发往任何地方。
+
 ### 把会话交给另一个账号
 
 每个账号的会话各自存放，在一个账号里 `claude --resume` 看不到另一个账号的会话。`handoff` 把一条会话（`.jsonl` 文件以及旁边存放子代理记录和工具输出的同名目录）复制到另一个账号的同一项目目录下：
@@ -341,6 +364,7 @@ multi-claude sessions --grep importer --cmd
 - 不移动、不删除任何东西，来源账号只读；还在写入的半行不会复制。来源账号之后的新消息不会同步过去。
 - 目标里已有内容不同的同一会话时，`handoff` 以退出码 3 停下；加 `--force` 会先把已有的那份改名为 `*.multi-claude-bak.*` 再复制，之前请先关掉目标账号里的这条会话。
 - 不复制 `/rewind` 用的快照（`file-history`）和项目记忆。
+- 每次复制都记入 `~/.config/multi-claude/handoffs.jsonl`，供 `artifacts` 判断谁发布了什么。记录写不进去时 `handoff` 照样成功，只打印警告。
 
 ### 改名与管理 MCP
 
@@ -499,6 +523,7 @@ multi-claude remove main         # 注销账号
 | `multi-claude code 名称 [路径] [-- 参数 ...]` | 以账号环境打开一个独立的 VS Code 实例（实验功能） |
 | `multi-claude handoff 目标 [--from 名称] [--session ID] [--force]` | 把一条会话复制到另一个账号，并打印在那边续聊的命令 |
 | `multi-claude sessions [名称] [--grep 文字] [--limit N] [--cmd] [--json]` | 列出所有账号、所有目录下的会话，最近更新的在前；加 `--cmd` 再附续聊命令；也可写成 `conversations` |
+| `multi-claude artifacts [名称] [--grep 文字] [--limit N] [--path] [--cmd] [--json]` | 列出所有账号的会话里发布过的 artifact，最近的在前，并标出所属账号；`--path` 附本地源文件，`--cmd` 附续聊命令 |
 | `multi-claude statusline install\|uninstall 文件` | 包装设置文件里的 statusLine 命令，让 `usage` 拿到更新的数值；或还原它 |
 | `multi-claude completion bash\|zsh\|fish` | 输出 shell 补全脚本 |
 
