@@ -114,7 +114,7 @@ def renew(identity, account_dir, config_dir, now_ms, post, on_commit) -> Outcome
 
 流程：
 
-1. **取锁**：配置目录不存在时返回 `no_refresh_token`。依次 `os.mkdir` 新锁与旧锁（§3 第 5 条），并记下每把锁的设备号与 inode。任一已存在 → 放掉已取到的，返回 `lock_busy`；因权限等原因建不了 → `lock_error`。不等待，不写持有者记录。已存在的锁只有在修改时间超过 300 秒没更新时才删掉重取一次（活着的持有者每 5 秒更新一次；这条用来清理本工具被强杀后留下的锁）。
+1. **取锁**：配置目录不存在时返回 `no_refresh_token`。依次 `os.mkdir` 新锁与旧锁（§3 第 5 条），建好后用 `time.time_ns()` 设一次锁目录的修改时间，再记下每把锁的设备号、inode 与修改时间作为指纹（修改时间不交给内核取的原因见 `docs/bugfix/fix-lock-owner-stamp.md`）。任一已存在 → 放掉已取到的，返回 `lock_busy`；因权限等原因建不了 → `lock_error`。不等待，不写持有者记录。已存在的锁只有在修改时间超过 300 秒没更新时才删掉重取一次（活着的持有者每 5 秒更新一次；这条用来清理本工具被强杀后留下的锁）。
 2. **锁内重读**：`read_credentials()`。
    - 读不出 → `credentials_unreadable`。
    - 访问令牌可用且没过期 → 别的进程刚刷新过，返回 `adopted`，带上这个令牌。
@@ -128,7 +128,7 @@ def renew(identity, account_dir, config_dir, now_ms, post, on_commit) -> Outcome
    - 200 且 `access_token` 可用 → 必须写回，其余字段只做降级，不再放弃：`refresh_token` 不是可用的令牌串时沿用发出去的那个；`expires_in` 读不成正的有限数（数字形式的字符串也接受）时把过期时刻写成收到响应的时刻，让 Claude Code 下次启动自己再刷一次；`refresh_token_expires_in`、`scope` 不合预期时不更新对应字段。理由：到这一步旧的刷新令牌多半已作废，丢掉响应等于让账号掉线，而真实响应的字段类型没有实测过。
 5. **比对并写回**：重读凭据。保存着的 `refreshToken` 既不等于发出去的那个、也不是空串 → 不写；这时如果保存着的访问令牌可用且没过期就返回 `adopted`，否则返回 `credentials_changed`。否则在原 `claudeAiOauth` 上更新 `accessToken`、`refreshToken`（响应里没有就沿用旧的）、`expiresAt`，响应里有才更新 `refreshTokenExpiresAt` 与 `scopes`，其余字段与顶层其它键原样保留，写回同一个来源。
 6. **校验**：写完再读一次，访问令牌等于新值才算成功。不成功就重写，共 3 次，间隔 0.1、0.2 秒；每次尝试里的意外异常只算这一次失败。3 次都不成 → `save_failed`，仍把新令牌返回给调用方用于本次查询。
-7. **放锁**：`finally` 里先停掉并等保活线程结束，再按相反顺序 `os.rmdir`。放锁与保活都先核对该路径上的目录还是不是自己建的那个（设备号与 inode）：进程被挂起超过 60 秒时锁可能已被别的进程删掉重建，那就不再碰它。
+7. **放锁**：`finally` 里先停掉并等保活线程结束，再按相反顺序 `os.rmdir`。放锁与保活都先核对该路径上的目录还是不是自己建的那个（设备号、inode 与自己最后写入的修改时间；保活同样用 `time.time_ns()` 写时间）：进程被挂起超过 60 秒时锁可能已被别的进程删掉重建，那就不再碰它。
 8. **保活**：持锁期间由一个守护线程每 5 秒把两个锁目录的修改时间更新为当前时间（与 proper-lockfile 的 `update` 相同），避免持锁超过 60 秒时被别的进程当作过期锁删掉。刷新请求的套接字超时取 30 秒（与 Claude Code 相同）：请求可能已被服务端受理，超时放弃就等于丢掉新令牌，所以这里比套餐查询的 10 秒宽。
 
 | status | 含义 | 写了凭据 |

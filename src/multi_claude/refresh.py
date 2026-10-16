@@ -230,12 +230,24 @@ class _Lock(object):
     """自己建的一把锁，以及用来确认“这个路径上还是我建的那个目录”的指纹。
 
     指纹是设备号、inode 和自己最后一次设置的修改时间（proper-lockfile 也靠修改时间判断锁有没有被别人动过）。
-    只比 inode 不够：别人删掉重建时文件系统可能复用同一个编号。
+    只比 inode 不够：别人删掉重建时文件系统可能复用同一个编号。修改时间也不能交给内核取：
+    ext4 上几毫秒内删掉重建的目录，inode 和内核记的修改时间多半与原来相同（实测 2000 次里 1993 次），会把别人的锁认成自己的。
+    所以建锁和保活时都用 _set_mtime_now 写入此刻的精细时间。
+    不能改成往锁目录里放标记文件：proper-lockfile 用 rmdir 清理过期锁，目录非空就删不掉，锁会一直卡住。
     """
 
     def __init__(self, path: str) -> None:
         self.path = path
+        try:
+            self._set_mtime_now()
+        except OSError:
+            # 设不了时间就用内核写的时间记指纹：锁照样能用，只是分辨不出同一时钟节拍里的删掉重建。
+            pass
         self._stamp = self._read()
+
+    def _set_mtime_now(self) -> None:
+        now_ns = time.time_ns()
+        os.utime(self.path, ns=(now_ns, now_ns))
 
     def _read(self) -> Optional[Tuple[int, int, int]]:
         try:
@@ -252,7 +264,8 @@ class _Lock(object):
         if not self.is_mine():
             return
         try:
-            os.utime(self.path, None)
+            # 不能用 os.utime(path, None)：那样又由内核取时间，保活一次后指纹就退回分辨不出重建的状态。
+            self._set_mtime_now()
         except OSError:
             return
         fresh = self._read()
