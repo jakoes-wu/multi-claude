@@ -100,6 +100,7 @@
 | 项 | 实现 | 设计文档 | 发布 |
 | ---- | ---- | ---- | ---- |
 | 跨账号、跨目录的会话列表 | `sessions [NAME]`（别名 `conversations`）：只读列出各账号各目录的会话，加 `--cmd` 附续聊命令（v0.10.0 时默认就附），含未迁移的 `~/.claude` | `feature-session-list.md`、`feature-sessions-cmd-column.md` | v0.10.0（PR #41）；排版与 `--cmd` v0.11.0（PR #43）；`--cmd` 不再显示 SESSION ID 列：v0.11.1（PR #45） |
+| 跨账号查 artifact 的归属与源文件 | `artifacts [NAME]`：离线扫描各账号会话记录里的发布，列出标题、所属账号、发布时间、URL，`--path` 附本地源文件，`--cmd` 附续聊命令；`handoff` 写交接记录供归属判定 | `feature-artifact-list.md` | v0.12.0（PR #47）；`--online` 联网核对：未排期 |
 
 ## 3. 待定（未排期）
 
