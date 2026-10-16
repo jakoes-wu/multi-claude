@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `artifacts` lists the artifacts published from the Claude sessions of every
+  account, newest first, with the owning account and the session that
+  published each (`--grep`, `--limit`, `--json`). `--path` adds the local
+  file each one was published from, marked `(missing)` when it is gone;
+  `--cmd` adds the command that resumes the session.
+- `handoff` records each copy in `~/.config/multi-claude/handoffs.jsonl` so
+  that `artifacts` can give publishes made before the copy back to the
+  source account. Sessions copied before this version show the owner as
+  unknown.
+
 ## [0.11.1] - 2026-10-13
 
 ### Changed

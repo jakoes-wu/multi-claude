@@ -39,6 +39,14 @@ steps to reproduce. You should receive a reply within a week.
   title, to the terminal (or to stdout with `--json`). Control characters
   are removed before printing. Nothing is saved or sent anywhere; no
   credential is read.
+- `multi-claude artifacts` reads the session files of every account and
+  prints the title, description, URL and local source path of each
+  artifact published from them. Control characters are removed before
+  printing. Nothing is saved or sent anywhere; no credential is read.
+- `multi-claude handoff` appends one line per copy to
+  `~/.config/multi-claude/handoffs.jsonl` (mode 0600): the session id,
+  the project folder name, the two account directories, and the size and
+  SHA-256 hash of each copied file. No conversation content is stored.
 - Every other command only checks whether a login exists
   (`security find-generic-password -a <user> -s <service>` without `-w` or
   `-g`) and makes no network connection.

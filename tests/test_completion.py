@@ -10,7 +10,7 @@ from helpers import CliTestCase
 
 SUBCOMMANDS = ("init", "migrate-default", "add", "proxy", "env", "args", "remove", "apply", "list",
                "usage", "doctor", "route", "which", "rename", "mcp", "completion", "statusline", "handoff", "login", "set",
-               "sessions")
+               "sessions", "artifacts")
 
 
 class CompletionTest(CliTestCase):

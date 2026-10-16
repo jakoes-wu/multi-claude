@@ -327,6 +327,29 @@ multi-claude sessions --grep importer --cmd
 - The command is read-only and stays on this machine: it reads the start and the end of each session file, prints the title (a piece of your conversation) to the terminal, and saves or sends nothing. It does not list subagent transcripts.
 - If the directory a session was started in no longer exists, the `cd` in the resume command fails; `claude --resume` only finds a session from the directory it was started in.
 
+### Finding an artifact
+
+Published an artifact from one of the accounts and cannot remember which one, or where its source file was? `artifacts` lists the artifacts published from the Claude sessions of every account on this machine, newest first:
+
+```sh
+multi-claude artifacts
+# TITLE           ACCOUNT  UPDATED           URL
+# Release notes   work     2026-10-15 09:12  https://claude.ai/artifact/9GwmwTUZsiSYKj4fLD7XdB
+multi-claude artifacts work               # only the artifacts owned by one account
+multi-claude artifacts --grep release     # title, description, URL, directory, source file or session id
+multi-claude artifacts --grep release --cmd   # adds the command that resumes the session below each one
+multi-claude artifacts --path             # adds the local file each one was published from
+# Release notes   work     2026-10-15 09:12  https://claude.ai/artifact/9GwmwTUZsiSYKj4fLD7XdB
+#   /private/tmp/claude-501/…/scratchpad/notes.html  (missing)
+multi-claude artifacts --json             # every match: source file (path, path_exists), session, publishes…
+```
+
+- The account is the one whose session published the artifact. A session copied with `handoff` holds the publishes made before the copy in both accounts; `handoff` therefore records each copy in `~/.config/multi-claude/handoffs.jsonl` (file names, sizes and SHA-256 hashes, no content), and `artifacts` uses it to give those publishes back to the source account.
+- `a,b ?` means the owner is unknown: the session was copied before multi-claude recorded handoffs (before 0.12.0, or before the first `handoff` after upgrading), or the record could not be written, or the copy no longer starts with the bytes that were copied. The artifact is listed under every account that has a copy.
+- Only artifacts published from Claude Code sessions on this machine are found: not those made on claude.ai or in the desktop app, and not those whose session was deleted. Backups made by `handoff --force` are not read. A handoff recorded for `~/.claude` before `migrate-default` no longer matches the account it became.
+- The source file is usually in Claude's temporary scratchpad and is often gone: `--path` marks it `(missing)`, and `path_exists` in `--json` tells the same. An artifact published without a local file shows `(no source file)`. With both `--path` and `--cmd`, the path comes first.
+- It shows the 30 most recent artifacts; `--limit N` changes that and `--limit 0` shows all. The command is read-only and stays on this machine: it reads the session files, prints titles, descriptions and paths taken from your sessions, and saves or sends nothing.
+
 ### Handing a session over to another account
 
 Each account keeps its own sessions, so `claude --resume` in one account cannot see the sessions of another. `handoff` copies one session (its `.jsonl` file and the folder next to it with subagent transcripts and saved tool output) into the same project folder of another account:
@@ -341,6 +364,7 @@ Each account keeps its own sessions, so `claude --resume` in one account cannot 
 - Nothing is moved or deleted, and the source account is only read. A line that is still being written is left out. Later messages in the source account are not synchronised.
 - If the target already has the same session with different content, `handoff` stops with exit code 3. `--force` renames the existing copy to `*.multi-claude-bak.*` and copies again; close that session in the target account first.
 - `/rewind` snapshots (`file-history`) and project memory are not copied.
+- Each copy is recorded in `~/.config/multi-claude/handoffs.jsonl` so that `artifacts` can tell which account published what. If the record cannot be written, `handoff` still succeeds and prints a warning.
 
 ### Renaming accounts and managing MCP servers
 
@@ -499,6 +523,7 @@ It never copies, exports, uploads or backs up a login. One command touches one: 
 | `multi-claude code NAME [PATH] [-- ARGS ...]` | Open a separate VS Code instance with the account's environment (experimental). |
 | `multi-claude handoff TARGET [--from NAME] [--session ID] [--force]` | Copy a session to another account and print the command that resumes it there. |
 | `multi-claude sessions [NAME] [--grep TEXT] [--limit N] [--cmd] [--json]` | List the sessions of every account and directory, newest first; `--cmd` adds the command that resumes each. Also `conversations`. |
+| `multi-claude artifacts [NAME] [--grep TEXT] [--limit N] [--path] [--cmd] [--json]` | List the artifacts published from the sessions of every account, newest first, with the account that owns each; `--path` adds the local source file, `--cmd` the command that resumes the session. |
 | `multi-claude statusline install\|uninstall FILE` | Wrap the statusLine command in a settings file so that `usage` gets fresh numbers, or restore it. |
 | `multi-claude completion bash\|zsh\|fish` | Print a shell completion script. |
 
