@@ -7,13 +7,16 @@
 
 import json
 import os
+import shutil
 import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import types
+import unittest
 from http.server import BaseHTTPRequestHandler
 from unittest import mock
 
@@ -480,6 +483,36 @@ class RenewTest(RefreshTestCase):
         for call in self.security_calls():
             self.assertNotIn("-i", call)
             self.assertNotIn("add-generic-password", call)
+
+
+class LockStampTest(unittest.TestCase):
+    """锁指纹里的修改时间必须是本工具写入的精细时间，不能交给内核取。
+
+    ext4 上几毫秒内删掉重建的锁目录，inode 和内核记的修改时间都与原来相同；只有自己写入的时间能分辨出来。
+    这里不依赖 inode 复用，在任何文件系统上确定性地检查“建锁和保活都写入了 time_ns 的值”。
+    """
+
+    # 低位非零：内核按时钟节拍记的时间不会恰好是这个值
+    STAMP_NS = 1_700_000_000_123_456_789
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="mcl-lock-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.path = os.path.join(self.tmp, refresh.LOCK_NAME)
+        os.mkdir(self.path)
+
+    def test_creating_and_touching_write_the_fine_clock(self):
+        # refresh.time 就是标准库 time：桩只包住这两次调用，不影响进程里的其它代码
+        with mock.patch.object(refresh.time, "time_ns", return_value=self.STAMP_NS):
+            lock = refresh._Lock(self.path)
+        self.assertEqual(os.lstat(self.path).st_mtime_ns, self.STAMP_NS)
+        self.assertTrue(lock.is_mine())
+
+        later = self.STAMP_NS + 5_000_000_000
+        with mock.patch.object(refresh.time, "time_ns", return_value=later):
+            lock.touch()
+        self.assertEqual(os.lstat(self.path).st_mtime_ns, later)
+        self.assertTrue(lock.is_mine())
 
 
 class KeychainWriteTest(CliTestCase):

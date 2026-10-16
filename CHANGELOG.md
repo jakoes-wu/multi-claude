@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Renewing a token in `list` could delete a lock that another process had
+  just taken over, on file systems such as ext4 that reuse the directory's
+  inode: the lock directory's modification time is now set from a fine
+  clock when the lock is taken and kept alive, so a re-created directory no
+  longer looks like ours.
+
 ## [0.12.0] - 2026-10-15
 
 ### Added
