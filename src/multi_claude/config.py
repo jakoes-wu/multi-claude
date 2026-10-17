@@ -4,6 +4,7 @@ config.json 是唯一的权威源，启动命令、共享链接都是从它推�
 本模块只负责数据本身，不创建或删除任何账号文件。
 """
 
+import datetime
 import json
 import os
 import re
@@ -80,7 +81,8 @@ class Account(object):
     def __init__(self, name: str, proxy: str = PROXY_INHERIT, shared: bool = False,
                  managed_links: Optional[List[str]] = None, identity: str = IDENTITY_DIR,
                  env: Optional[Dict[str, str]] = None, args: Optional[List[str]] = None,
-                 dir: Optional[str] = None, shared_exclude: Optional[List[str]] = None) -> None:
+                 dir: Optional[str] = None, shared_exclude: Optional[List[str]] = None,
+                 renews: Optional[str] = None) -> None:
         self.name = name
         # 账号目录在根目录下的名字。缺省等于账号名；rename 只改 name、不改 dir，
         # 目录路径不变，macOS 上按路径绑定的登录就不会丢（方案 feature-rename-mcp §3）。
@@ -93,10 +95,14 @@ class Account(object):
         self.identity = identity
         self.env = dict(env or {})
         self.args = list(args or [])
+        # 订阅续费日 YYYY-MM-DD，用户照着 App Store / Google Play 订阅页手填；None 表示没填。
+        # 服务端接口给不出准确的到期日，所以只能手填（方案 feature-renewal-date §1）。
+        self.renews = renews
 
     def copy(self) -> "Account":
+        # migrate-default、restore 靠 config.copy() 复制配置，漏掉任何字段都会让这两个命令把它清掉。
         return Account(self.name, self.proxy, self.shared, list(self.managed_links), self.identity,
-                       dict(self.env), list(self.args), self.dir, list(self.shared_exclude))
+                       dict(self.env), list(self.args), self.dir, list(self.shared_exclude), self.renews)
 
     def to_dict(self) -> dict:
         data = {"identity": self.identity, "proxy": self.proxy, "shared": self.shared,
@@ -107,6 +113,9 @@ class Account(object):
         # 同理只在非空时写出，没有退出项的账号配置内容不变。
         if self.shared_exclude:
             data["shared_exclude"] = list(self.shared_exclude)
+        # 同理只在填过续费日时写出。
+        if self.renews:
+            data["renews"] = self.renews
         return data
 
 
@@ -372,7 +381,24 @@ def _parse_account(name: str, value: object, source: str) -> Account:
     exclude = value.get("shared_exclude", [])
     if not isinstance(exclude, list) or not all(_valid_item(item) for item in exclude):
         raise ConfigError("{}: 'shared_exclude' must be a list of names".format(where))
-    return Account(name, proxy, shared, links, identity, env, args, directory, _unique(exclude))
+    renews = value.get("renews")
+    if renews is not None:
+        try:
+            renews = validate_renews(renews)
+        except ValueError:
+            raise ConfigError("{}: 'renews' must be a date YYYY-MM-DD".format(where))
+    return Account(name, proxy, shared, links, identity, env, args, directory, _unique(exclude), renews)
+
+
+def validate_renews(value: object) -> str:
+    """校验续费日：整串 YYYY-MM-DD 且是真实存在的日期（拒绝 2026-02-30）。"""
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+        raise ValueError("renewal date must be YYYY-MM-DD, e.g. 2026-11-10")
+    try:
+        datetime.datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError("renewal date must be YYYY-MM-DD, e.g. 2026-11-10")
+    return value
 
 
 def _unique(items: List[str]) -> List[str]:

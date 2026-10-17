@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `add` and `set` take `--renews YYYY-MM-DD` (or `--renews off`) to record
+  the renewal date shown on the store's subscription page; Anthropic's
+  interface does not provide it. Once any account has a date, `list` shows a
+  `RENEWS` column with the days left, `list --json` gives each account a
+  `renews` object (or `null`), and a date that has passed is reported on
+  stderr. Installing an older version and then changing any setting drops
+  the dates, because older versions do not know the `renews` key.
+- `set --help`, `add --help` and `list --help` end with examples covering
+  every option.
+
 ## [0.12.1] - 2026-10-16
 
 ### Fixed
