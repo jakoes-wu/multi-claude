@@ -58,6 +58,7 @@
 | 第二批 | 帮助分组与示例；`list` 简表（`--verbose` 为完整输出）；按 shell 给出 PATH 命令；README 重排 | `feature-clearer-help.md` | v0.3.0（PR #16） |
 | 第三批 | `set` 命令；`--shared [DIR]` 与默认 `~/.claude-shared`；空共享目录提示 | `feature-set-command.md` | v0.3.0（PR #17） |
 | 小改进 | 本文档补 v0.3.0；包装状态栏后提示新开会话；账号名写在选项后面时的报错 | `feature-usability-fixes.md` | v0.3.1（PR #19） |
+| 子命令帮助示例 | 每个子命令的 `--help` 末尾都有覆盖全部选项的示例 | `feature-help-examples.md` | 未发布 |
 
 ### 2.5 常用命令（v0.5.0）
 

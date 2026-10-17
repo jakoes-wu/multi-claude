@@ -15,6 +15,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import textwrap
 import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from typing import List, NamedTuple, Optional, Tuple
@@ -110,6 +111,16 @@ def _examples_lines(examples: List[Tuple[str, str]]) -> List[str]:
     return lines
 
 
+def _attach_examples(parser: argparse.ArgumentParser, examples: List[Tuple[str, str]]) -> None:
+    """给子命令帮助末尾加 Examples: 段。示例要靠 RawDescriptionHelpFormatter 才能保留列对齐，
+    但它对说明文字也不再折行，所以先把说明按 79 列折好；已手动加过 \\n 的说明是作者自己排过版的，原样保留。
+    argparse 在打印帮助时才读这三个属性，子解析器建好后再设置同样生效（方案 feature-help-examples §3）。"""
+    if "\n" not in (parser.description or ""):
+        parser.description = "\n".join(textwrap.wrap(parser.description or "", 79))
+    parser.epilog = "\n".join(_examples_lines(examples))
+    parser.formatter_class = argparse.RawDescriptionHelpFormatter
+
+
 # 子命令帮助末尾的示例：覆盖该命令的全部选项（公共写选项 --verbose 除外），测试逐条解析核对。
 _SET_EXAMPLES = [
     ("multi-claude set work --proxy 7901", "set the proxy to http://127.0.0.1:7901"),
@@ -150,6 +161,138 @@ _RENEWS_LEGEND = [
     "(25d) days left, (3d!) three days or less, (today!) renews today,",
     "(6d ago) passed: update it after the store renews.",
 ]
+
+# 其余子命令帮助末尾的示例（方案 feature-help-examples §5.1.2）：合起来覆盖每个选项与固定取值，照抄即可运行；
+# tests/test_help_examples.py 逐条解析、在沙箱里实跑，并核对没有漏掉的选项。add、set、list 的示例在上面单独定义。
+_SUBCOMMAND_EXAMPLES = {
+    "init": [
+        ("multi-claude init --root ~/.cc --bin-dir ~/.local/bin", "where account directories and launchers go"),
+        ("multi-claude init --shared-dir ~/.claude-shared", "directory whose items can be linked into accounts"),
+        ("multi-claude init --shared-items agents,commands,skills,CLAUDE.md", "items to share (this is the default)"),
+        ("multi-claude init --root ~/.cc --dry-run --verbose", "list every planned action without writing"),
+    ],
+    "migrate-default": [
+        ("multi-claude migrate-default --dry-run", "preview; without NAME, usually the login e-mail"),
+        ("multi-claude migrate-default home", "turn ~/.claude into account home, login kept"),
+        ("multi-claude migrate-default home --proxy 7901", "and give it a proxy"),
+        ("multi-claude migrate-default home --copy --keep-backup", "copy instead of rename; keep the original"),
+        ("multi-claude migrate-default home --skip-process-check", "do not check for running Claude Code (risky)"),
+    ],
+    "proxy": [
+        ("multi-claude proxy work 7901", "same as http://127.0.0.1:7901"),
+        ("multi-claude proxy work https://proxy.example.com:8443", "any http(s) URL without user or password"),
+        ("multi-claude proxy work off", "unset the proxy variables in claude-work"),
+        ("multi-claude proxy work inherit --dry-run", "keep the shell's proxy (default); preview only"),
+    ],
+    "env": [
+        ("multi-claude env work MAX_THINKING_TOKENS=8000", "add or change a variable"),
+        ("multi-claude env work --unset MAX_THINKING_TOKENS", "remove it again"),
+        ("multi-claude env --defaults MAX_THINKING_TOKENS=8000", "for every account"),
+        ("multi-claude env work DISABLE_TELEMETRY=1 --dry-run", "preview only"),
+    ],
+    "args": [
+        ("multi-claude args work -- --ide", "claude-work always starts with --ide"),
+        ("multi-claude args --defaults -- --ide", "the same for every account"),
+        ("multi-claude args work --", "clear the fixed arguments of work"),
+        ("multi-claude args work --dry-run -- --ide", "preview only"),
+    ],
+    "remove": [
+        ("multi-claude remove work", "unregister work; directory and login stay"),
+        ("multi-claude remove work --dry-run", "preview only"),
+    ],
+    "apply": [
+        ("multi-claude apply", "rewrite launchers and links to match config.json"),
+        ("multi-claude apply --dry-run --verbose", "list every planned action without writing"),
+        ("multi-claude apply -f accounts.json", "adopt accounts.json as the new configuration"),
+    ],
+    "usage": [
+        ("multi-claude usage", "5-hour and 7-day usage of every account"),
+        ("multi-claude usage work --json", "one account, for scripts"),
+        ("multi-claude usage --history", "tokens per day, last 7 days"),
+        ("multi-claude usage --history work --days 30 --by model", "one account, 30 days, per model"),
+        ("multi-claude usage --history --by day", "per day (the default grouping)"),
+    ],
+    "doctor": [
+        ("multi-claude doctor", "check the setup and suggest fixes"),
+        ("multi-claude doctor --verbose", "also list the checks that passed"),
+        ("multi-claude doctor --json", "for scripts"),
+    ],
+    "route": [
+        ("multi-claude route ~/work work", "claude-auto uses work under ~/work"),
+        ("multi-claude route ~/work --remove", "remove that route"),
+        ("multi-claude route --default home", "use home where no route matches"),
+        ("multi-claude route --no-default", "run plain claude where no route matches"),
+        ("multi-claude route ~/work work --dry-run", "preview only"),
+    ],
+    "rename": [
+        ("multi-claude rename work job", "claude-work becomes claude-job"),
+        ("multi-claude rename work job --dry-run", "preview only"),
+    ],
+    "mcp": [
+        ("multi-claude mcp work list", "the MCP servers of work"),
+        ("multi-claude mcp work add --scope user github -- npx -y @modelcontextprotocol/server-github", "everything after the name goes to `claude mcp`"),
+    ],
+    "login": [
+        ("multi-claude login work", "runs `claude auth login` as work"),
+    ],
+    "which": [
+        ("multi-claude which", "the account claude-auto would use here"),
+        ("multi-claude which ~/work", "... in ~/work"),
+    ],
+    "run": [
+        ("multi-claude run work", "same as claude-work"),
+        ("multi-claude run work -- claude --version", "any command, with the environment of claude-work"),
+        ("multi-claude run -- env", "without a name: the account claude-auto would use here"),
+    ],
+    "path": [
+        ("multi-claude path work", "print the directory of work"),
+    ],
+    "code": [
+        ("multi-claude code work ~/work", "a separate VS Code window for work"),
+        ("multi-claude code work . -- --disable-gpu", "arguments after -- go to VS Code"),
+    ],
+    "restore": [
+        ("multi-claude restore home --dry-run", "preview moving home back to ~/.claude"),
+        ("multi-claude restore home", "undo migrate-default, login kept"),
+        ("multi-claude restore home --skip-process-check", "do not check for running Claude Code (risky)"),
+    ],
+    "export": [
+        ("multi-claude export work ~/work-settings.tar.gz", "settings, CLAUDE.md, agents, skills, MCP; no logins"),
+    ],
+    "import": [
+        ("multi-claude import ~/work-settings.tar.gz home", "into an existing account"),
+        ("multi-claude import ~/work-settings.tar.gz home --dry-run", "preview only"),
+        ("multi-claude import ~/work-settings.tar.gz home --force", "back up and replace items that differ"),
+    ],
+    "completion": [
+        ("multi-claude completion bash > ~/.local/share/bash-completion/completions/multi-claude", "bash completion for your user"),
+        ('multi-claude completion zsh > "${fpath[1]}/_multi-claude"', "zsh: any directory on your fpath"),
+        ("multi-claude completion fish > ~/.config/fish/completions/multi-claude.fish", "fish completion"),
+    ],
+    "statusline": [
+        ("multi-claude statusline install ~/.claude/settings.json", "record fresh usage from the status line"),
+        ("multi-claude statusline uninstall ~/.claude/settings.json --dry-run", "preview restoring the original command"),
+    ],
+    "handoff": [
+        ("! multi-claude handoff home", "inside a Claude session: hand it to home"),
+        ("multi-claude handoff home --from work", "the latest session of work in this directory"),
+        ("multi-claude handoff home --from work --session 3c588340-1219-48df-a231-509866789487", "a given session"),
+        ("multi-claude handoff home --from work --force --dry-run", "preview replacing a different copy"),
+    ],
+    "sessions": [
+        ("multi-claude sessions", "the 30 newest sessions of every account"),
+        ("multi-claude sessions work --limit 10", "one account, 10 sessions"),
+        ("multi-claude sessions --grep importer --cmd", "with the command that resumes each"),
+        ("multi-claude sessions --limit 0 --json", "every session, for scripts"),
+        ("multi-claude conversations --grep importer", "another name for sessions"),
+    ],
+    "artifacts": [
+        ("multi-claude artifacts", "the 30 newest artifacts of every account"),
+        ("multi-claude artifacts work --grep report", "one account, matching text"),
+        ("multi-claude artifacts --path --cmd", "with the source file and the resume command"),
+        ("multi-claude artifacts --limit 0 --json", "every artifact, for scripts"),
+    ],
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -371,6 +514,9 @@ def build_parser() -> argparse.ArgumentParser:
                              help="also print, below each artifact, the local file it was published from, marked "
                                   "(missing) when it no longer exists")
     p_artifacts.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    # add、set、list 的示例在 add_parser 时已传入；其余子命令在这里统一挂上（键必须是已定义的子命令名）。
+    for name, examples in _SUBCOMMAND_EXAMPLES.items():
+        _attach_examples(sub.choices[name], examples)
     return parser
 
 
