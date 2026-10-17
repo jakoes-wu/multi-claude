@@ -94,6 +94,7 @@
 | ---- | ---- | ---- | ---- |
 | list 的 PLAN、BILLING 两列 | 用各账号的访问令牌向服务端实时查询，走该账号的代理；`list --offline` 不查 | `feature-live-plan.md` | v0.9.0（PR #37） |
 | 过期令牌自动刷新 | 访问令牌过期时按 Claude Code 的方式刷新并写回；没刷新成显示 `token expired`；`list --no-refresh` 不写 | `feature-token-refresh.md`、`fix-lock-owner-stamp.md` | v0.9.1（PR #39）；ext4 上锁归属误判修复 v0.12.1（PR #49） |
+| list 的 RENEWS 列（手填续费日） | 服务端接口没有续费日，`add` / `set --renews YYYY-MM-DD\|off` 照商店订阅页手填；`list` 显示剩余天数，已过期在 stderr 提醒；`--json` 带 `renews`；`set` / `add` / `list --help` 附示例 | `feature-renewal-date.md` | v0.13.0（PR #51） |
 
 ### 2.10 查找会话
 

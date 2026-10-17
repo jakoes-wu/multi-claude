@@ -1,3 +1,3 @@
 """multi-claude：管理多个 Claude Code 账号的配置目录、启动命令、代理与启动参数。"""
 
-__version__ = "0.12.1"
+__version__ = "0.13.0"
