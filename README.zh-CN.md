@@ -304,6 +304,19 @@ old    keychain  token expired  -       inherit                no      -        
 - `error` 的原因打印在 stderr，例如 `plan lookup failed for work: timeout (via 127.0.0.1:7890, 10.01s)`。`tls_failed` 通常是运行 multi-claude 的 Python 没有根证书（python.org 的安装包带有 `Install Certificates.command`）。
 - `list --offline` 跳过查询：不读令牌、不发请求，表格里没有这两列。`list --json` 在每个账号的 `plan` 对象里给出同样的数据（`refresh` 字段说明是否续期过），脚本应读它而不是解析表格。查询通常多花一秒左右，最多 15 秒；已经开始的续期会先等它完成（第一次 Ctrl-C 只打印提示），以免新的登录信息丢失。
 
+#### 续费日
+
+Anthropic 的接口不提供订阅的续费日期；按接口数据推算出的日期，对中途停订后又重新订阅的账号是错的。所以续费日改为照着商店的订阅页面（App Store 或 Google Play）手动填写：
+
+```sh
+multi-claude set work --renews 2026-11-10   # 商店页面显示的日期
+multi-claude set work --renews off          # 清除
+```
+
+只要有一个账号填了日期，`list` 就多出一列 `RENEWS`（`--offline` 时也有，因为不需要联网）：`11-10 (25d)` 表示还有 25 天，`10-19 (3d!)` 表示 3 天以内，`10-16 (today!)` 表示就是今天，`10-10 (6d ago)` 表示已经过了。不在今年的日期写全，如 `2027-01-05 (81d)`。天数按本机时区计算。日期已过（通常是商店已自动续费）时，`list` 在 stderr 提醒你去查新的续费日。没填的账号显示 `-`；所有账号都没填时，表格与原来相同。
+
+`list --json` 中每个账号带 `"renews": {"date": "2026-11-10", "days_left": 25}`（日期已过时 `days_left` 为负数），没填为 `null`。日期保存在 `config.json` 账号的 `renews` 键里；`apply -f 文件` 把它当作普通账号设置，文件里没写 `renews` 的账号，续费日会被清除。
+
 ### 查找会话
 
 记不清某条会话是在哪个账号、哪个目录下开的？`sessions` 列出所有账号、所有项目目录下的会话，最近更新的在前；加 `--cmd` 再附上每条会话的续聊命令：
@@ -502,14 +515,14 @@ multi-claude remove main         # 注销账号
 | `multi-claude restore 名称 [--skip-process-check] [--dry-run]` | 撤销 `migrate-default`：把账号移回 `~/.claude` 并注销，登录保持不变 |
 | `multi-claude export 名称 文件` | 把账号的设置、`CLAUDE.md`、agents、commands、skills、output styles 和 MCP 服务器写进文件；不含登录与会话 |
 | `multi-claude import 文件 名称 [--force] [--dry-run]` | 把这样的文件导入已有账号；有冲突时拒绝，除非加 `--force`（会先备份） |
-| `multi-claude add 名称 [--proxy P] [--shared [目录] \| --no-shared] [--adopt] [--shared-exclude 项] [--shared-include 项] [--config-from 其它账号]` | 新增账号、登记已有目录或修改其选项；`--config-from` 从另一个账号复制一次 `settings.json`；`--shared 目录` 同时把它设为所有账号的共享目录（默认 `~/.claude-shared`）；`--shared-exclude` 让这个账号不共享某一项，`--shared-include` 撤销 |
-| `multi-claude set 名称 [--proxy P] [--shared [目录] \| --no-shared] [--shared-exclude 项] [--shared-include 项]` | 修改已有账号，选项同 `add`（没有 `--adopt`）；账号未登记时返回 1 |
+| `multi-claude add 名称 [--proxy P] [--shared [目录] \| --no-shared] [--adopt] [--shared-exclude 项] [--shared-include 项] [--renews 日期\|off] [--config-from 其它账号]` | 新增账号、登记已有目录或修改其选项；`--config-from` 从另一个账号复制一次 `settings.json`；`--renews` 记录续费日（见[续费日](#续费日)）；`--shared 目录` 同时把它设为所有账号的共享目录（默认 `~/.claude-shared`）；`--shared-exclude` 让这个账号不共享某一项，`--shared-include` 撤销 |
+| `multi-claude set 名称 [--proxy P] [--shared [目录] \| --no-shared] [--shared-exclude 项] [--shared-include 项] [--renews 日期\|off]` | 修改已有账号，选项同 `add`（没有 `--adopt`）；账号未登记时返回 1 |
 | `multi-claude proxy 名称 端口\|URL\|off\|inherit` | 设置账号代理 |
 | `multi-claude env (名称 \| --defaults) [K=V ...] [--unset K ...]` | 设置或删除额外环境变量 |
 | `multi-claude args (名称 \| --defaults) -- [参数 ...]` | 整体替换固定参数；`--` 后面为空表示清空 |
 | `multi-claude remove 名称` | 注销账号并删除其启动命令。**账号目录和登录都会保留** |
 | `multi-claude apply [-f 文件]` | 按配置（或 `文件`）收敛全部账号 |
-| `multi-claude list [--verbose \| --json \| --names] [--no-refresh] [--offline]` | 列出账号、启动命令、登录状态，以及向 Anthropic 查询到的套餐与付款渠道；`--json` 额外包含用量，供脚本使用；`--names` 只输出名称；`--no-refresh` 不续期过期的访问令牌（不写登录信息）；`--offline` 跳过套餐查询（不读令牌、不联网） |
+| `multi-claude list [--verbose \| --json \| --names] [--no-refresh] [--offline]` | 列出账号、启动命令、登录状态，以及向 Anthropic 查询到的套餐与付款渠道；`--json` 额外包含用量，供脚本使用；`--names` 只输出名称；`--no-refresh` 不续期过期的访问令牌（不写登录信息）；`--offline` 跳过套餐查询（不读令牌、不联网）；填过续费日时多一列 `RENEWS`（`--json` 中为 `renews` 键） |
 | `multi-claude usage [名称] [--json]` | 显示各账号最近一次已知的 5 小时 / 7 天用量 |
 | `multi-claude usage --history [名称] [--days N] [--by day\|model] [--json]` | 按天或按模型统计本机会话记录里的 token 用量（默认 7 天） |
 | `multi-claude doctor [--json] [--verbose]` | 检查配置、启动命令、账号目录、共享软链、登录与环境变量 |

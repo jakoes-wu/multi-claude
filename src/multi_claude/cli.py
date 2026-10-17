@@ -16,7 +16,7 @@ import stat
 import subprocess
 import sys
 import unicodedata
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import List, NamedTuple, Optional, Tuple
 
 from . import (__version__, accounts, artifacts, bundle, completion, doctor, history, hook, identity, launcher, migrate,
@@ -24,7 +24,7 @@ from . import (__version__, accounts, artifacts, bundle, completion, doctor, his
 from .actions import LOG_PREFIX, error, info, warn
 from .config import (DEFAULT_SHARED_DIR, DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError, RouteRule,
                      is_unshareable, load_config, normalize_proxy, parse_config, validate_env_key, validate_name,
-                     validate_route_path, validate_value, config_path)
+                     validate_renews, validate_route_path, validate_value, config_path)
 from .env import account_env
 from .fsutil import KIND_FILE, KIND_LINK, KIND_MISSING, atomic_write, entry_kind, expand, read_text
 from .lock import LockBusyError, WriteLock
@@ -46,7 +46,7 @@ COMMAND_GROUPS = [
         ("list", "show accounts, logins and usage"),
     ]),
     ("Account settings", [
-        ("set NAME", "change an account: proxy and sharing"),
+        ("set NAME", "change an account: proxy, sharing, renewal date"),
         ("proxy, env, args", "set the proxy, extra variables or fixed arguments of a launcher"),
         ("rename, remove", "rename or unregister an account"),
         ("migrate-default, restore", "turn the existing ~/.claude into an account, or back"),
@@ -74,6 +74,7 @@ _EXAMPLES = [
     ("multi-claude add work --proxy 7901", ""),
     ("multi-claude login work", ""),
     ("multi-claude route ~/work work", ""),
+    ("multi-claude set work --renews 2026-11-10", "record when the plan renews"),
     ("multi-claude add --help", "details of one command"),
 ]
 
@@ -95,10 +96,60 @@ def _help_epilog() -> str:
         for shown, text in items:
             lines.append("  {:<18}{}".format(shown, text))
         lines.append("")
-    lines.append("Examples:")
-    for command, text in _EXAMPLES:
-        lines.append("  {:<36}{}".format(command, text).rstrip())
+    lines.extend(_examples_lines(_EXAMPLES))
     return "\n".join(lines)
+
+
+def _examples_lines(examples: List[Tuple[str, str]]) -> List[str]:
+    """帮助末尾的 Examples: 段。列宽按最长的命令算：固定列宽遇到长命令时说明会紧贴在命令后面，
+    测试按“两个以上空格”切分命令与说明，贴住就切不开（方案 feature-renewal-date §5.1.4）。"""
+    width = max(len(command) for command, _text in examples) + 2
+    lines = ["Examples:"]
+    for command, text in examples:
+        lines.append("  {}{}".format(command.ljust(width), text).rstrip())
+    return lines
+
+
+# 子命令帮助末尾的示例：覆盖该命令的全部选项（公共写选项 --verbose 除外），测试逐条解析核对。
+_SET_EXAMPLES = [
+    ("multi-claude set work --proxy 7901", "set the proxy to http://127.0.0.1:7901"),
+    ("multi-claude set work --proxy off", "start claude-work without a proxy"),
+    ("multi-claude set work --shared", "link the shared items (default {})".format(DEFAULT_SHARED_DIR)),
+    ("multi-claude set work --shared ~/claude-common", "make ~/claude-common the shared directory for every account"),
+    ("multi-claude set work --no-shared", "remove the shared links of this account"),
+    ("multi-claude set work --shared-exclude skills", "do not link skills into this account"),
+    ("multi-claude set work --shared-include skills", "link skills again"),
+    ("multi-claude set work --renews 2026-11-10", "record the renewal date shown by the App Store / Google Play"),
+    ("multi-claude set work --renews off", "forget the renewal date"),
+    ("multi-claude set work --renews 2026-11-10 --dry-run", "show what would change without writing"),
+]
+
+_ADD_EXAMPLES = [
+    ("multi-claude add work", "create account work and its launcher claude-work"),
+    ("multi-claude add work --proxy 7901 --shared", "with a proxy and the shared items"),
+    ("multi-claude add work --no-shared", "keep the account without shared links"),
+    ("multi-claude add work --shared-exclude skills", "share everything except skills"),
+    ("multi-claude add work --shared-include skills", "share skills again"),
+    ("multi-claude add work --renews 2026-11-10", "also record the renewal date"),
+    ("multi-claude add work --shared --adopt", "take over shared links that already exist"),
+    ("multi-claude add work --config-from home", "copy settings.json from account home once"),
+    ("multi-claude add work --dry-run", "show what would be created"),
+]
+
+_LIST_EXAMPLES = [
+    ("multi-claude list", "accounts, plan, usage; RENEWS appears once a renewal date is set"),
+    ("multi-claude list --offline", "no token read, no network (RENEWS still shown)"),
+    ("multi-claude list --no-refresh", "never renew an expired access token"),
+    ("multi-claude list --verbose", "every field and the global settings"),
+    ("multi-claude list --json", 'for scripts; each account has "renews": {"date", "days_left"} or null'),
+    ("multi-claude list --names", "account names only"),
+]
+
+_RENEWS_LEGEND = [
+    "RENEWS: the date you recorded with `multi-claude set NAME --renews YYYY-MM-DD`;",
+    "(25d) days left, (3d!) three days or less, (today!) renews today,",
+    "(6d ago) passed: update it after the store renews.",
+]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -134,13 +185,18 @@ def build_parser() -> argparse.ArgumentParser:
                        help="do not check whether Claude Code is running (at your own risk)")
     _add_dry_run(p_mig)
 
-    p_add = sub.add_parser("add", description="add an account, adopt an existing directory, or change its options")
+    # 带 epilog 示例的子命令用 RawDescriptionHelpFormatter 保留换行；description 因此不再自动折行，须手动加 \n。
+    p_add = sub.add_parser("add", description="add an account, adopt an existing directory, or change its options",
+                           epilog="\n".join(_examples_lines(_ADD_EXAMPLES)),
+                           formatter_class=argparse.RawDescriptionHelpFormatter)
     _add_account_options(p_add, adopt=True)
     p_add.add_argument("--config-from", metavar="OTHER",
                        help="copy settings.json from account OTHER into this account once")
 
-    p_set = sub.add_parser("set", description="change an existing account: proxy and sharing "
-                                              "(use env, args, rename for the rest)")
+    p_set = sub.add_parser("set", description="change an existing account: proxy, sharing and renewal date\n"
+                                              "(use env, args, rename for the rest)",
+                           epilog="\n".join(_examples_lines(_SET_EXAMPLES)),
+                           formatter_class=argparse.RawDescriptionHelpFormatter)
     _add_account_options(p_set, adopt=False)
 
     p_proxy = sub.add_parser("proxy", description="set the proxy of an account")
@@ -169,8 +225,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_apply.add_argument("-f", "--file", help="use this file as the new configuration")
     _add_write_options(p_apply)
 
-    p_list = sub.add_parser("list", description="show accounts and their status; looks up each account's plan "
-                            "and billing channel from Anthropic unless --offline is given")
+    p_list = sub.add_parser("list", description="show accounts and their status; looks up each account's plan\n"
+                            "and billing channel from Anthropic unless --offline is given",
+                            epilog="\n".join(_examples_lines(_LIST_EXAMPLES) + [""] + _RENEWS_LEGEND),
+                            formatter_class=argparse.RawDescriptionHelpFormatter)
     list_mode = p_list.add_mutually_exclusive_group()
     list_mode.add_argument("--verbose", action="store_true",
                            help="show every field, the global settings and the keychain details")
@@ -341,6 +399,9 @@ def _add_account_options(parser: argparse.ArgumentParser, adopt: bool) -> None:
                              "the link multi-claude made is removed")
     parser.add_argument("--shared-include", action="append", default=[], metavar="ITEM",
                         help="undo --shared-exclude for this item (repeatable)")
+    # 续费日由用户照着 App Store / Google Play 的订阅页手填：服务端接口给不出准确的到期日（方案 feature-renewal-date §1）。
+    parser.add_argument("--renews", metavar="DATE",
+                        help="renewal date of the subscription, YYYY-MM-DD as shown by the store; off to clear it")
     _add_write_options(parser)
 
 
@@ -606,6 +667,8 @@ def dispatch(args: argparse.Namespace) -> int:
             account.shared = True
         elif args.no_shared:
             account.shared = False
+        if args.renews is not None:
+            account.renews = None if args.renews == "off" else _checked_renews(args.renews)
         _apply_shared_exclude(new, account, args.shared_exclude, args.shared_include)
         if getattr(args, "adopt", False):
             # 接管只对开启了共享的账号有意义；关闭状态下工具本来就不管这些软链。
@@ -1178,7 +1241,7 @@ def _hint_next_step(config: Config, name: str) -> None:
 
 def _has_account_option(args: argparse.Namespace) -> bool:
     return bool(args.proxy is not None or args.shared_to is not None or args.no_shared
-                or args.shared_exclude or args.shared_include)
+                or args.shared_exclude or args.shared_include or args.renews is not None)
 
 
 def _looks_like_path(value: str) -> bool:
@@ -1328,6 +1391,13 @@ def _checked_proxy(value: str) -> str:
         raise UsageError(str(exc))
 
 
+def _checked_renews(value: str) -> str:
+    try:
+        return validate_renews(value)
+    except ValueError as exc:
+        raise UsageError(str(exc))
+
+
 def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = False, offline: bool = False,
              refresh_tokens: bool = True) -> int:
     """列出账号。除 --names 与 --offline 外，会读各账号的访问令牌并向服务端查询套餐（方案 feature-live-plan）；
@@ -1346,9 +1416,12 @@ def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = Fa
     plans = None if offline or not exists else plan.query_all(config, os.environ, datetime.now(timezone.utc),
                                                              allow_refresh=refresh_tokens)
     if as_json:
-        _print_json(_list_data(config, exists, plans))
+        # 只取一次今天：JSON 里的 days_left 与 stderr 的过期提示在跨午夜时也一致。
+        today = _local_today()
+        _print_json(_list_data(config, exists, plans, today))
         if exists:
             _report_plan_problems(plans)
+            _report_renewals(config, today)
             accounts.warn_launch_settings(config, None, note_invalid=True)
         return accounts.EXIT_OK
     if not exists:
@@ -1365,7 +1438,10 @@ def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = Fa
         return accounts.EXIT_OK
     if "CLAUDE_CODE_CUSTOM_OAUTH_URL" in os.environ:
         warn("CLAUDE_CODE_CUSTOM_OAUTH_URL is set; LOGIN assumes the production service and may be wrong")
-    rows = [("NAME", "IDENTITY", "DIR", "PROXY", "SHARED", "LAUNCHER", "LOGIN") + _plan_header(plans) + ("LINK",)]
+    today = _local_today()
+    renews_shown = _has_renewals(config)
+    rows = [("NAME", "IDENTITY", "DIR", "PROXY", "SHARED", "LAUNCHER", "LOGIN") + _plan_header(plans)
+            + _renews_header(renews_shown) + ("LINK",)]
     details = []
     default_account = None
     for entry in _account_entries(config):
@@ -1373,7 +1449,9 @@ def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = Fa
             default_account = entry["name"]
         rows.append((entry["name"], entry["identity"], "ok" if entry["dir_exists"] else "missing-dir",
                      entry["proxy"], _shared_cell(entry), entry["launcher"], entry["login"])
-                    + _plan_cells(plans, entry["name"]) + (entry["link"] or "-",))
+                    + _plan_cells(plans, entry["name"])
+                    + _renews_cells(renews_shown, config.find(entry["name"]).renews, today)
+                    + (entry["link"] or "-",))
         if verbose:
             details.append("  {}: keychain service {!r}, credentials file {}".format(
                 entry["name"], entry["keychain_service"], entry["credentials_file"]))
@@ -1385,6 +1463,7 @@ def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = Fa
     for line in details:
         print(line)
     _report_plan_problems(plans)
+    _report_renewals(config, today)
     accounts.warn_launch_settings(config, None, note_invalid=True)
     return accounts.EXIT_OK
 
@@ -1401,6 +1480,61 @@ def _plan_cells(plans: Optional[dict], name: str) -> tuple:
     if plans is None:
         return ()
     return (plan.plan_cell(plans[name]), plan.billing_cell(plans[name]))
+
+
+def _local_today() -> date:
+    """本机时区的今天；续费日按商店页面显示的日期手填，剩余天数也按本地日期算。"""
+    return datetime.now().astimezone().date()
+
+
+def _has_renewals(config: Config) -> bool:
+    """没有任何账号填过续费日时不加 RENEWS 列，表格与改动前完全相同。"""
+    return any(account.renews for account in config.accounts.values())
+
+
+def _renews_header(shown: bool) -> tuple:
+    return ("RENEWS",) if shown else ()
+
+
+def _renews_cells(shown: bool, renews: Optional[str], today: date) -> tuple:
+    return (_renews_cell(renews, today),) if shown else ()
+
+
+def _renews_days(renews: str, today: date) -> int:
+    return (datetime.strptime(renews, "%Y-%m-%d").date() - today).days
+
+
+def _renews_cell(renews: Optional[str], today: date) -> str:
+    """RENEWS 列的一格：同年只写月-日，括号里是剩余天数；3 天内加 !，已过写 ago，提醒去商店页核对后更新。"""
+    if not renews:
+        return "-"
+    day = datetime.strptime(renews, "%Y-%m-%d").date()
+    shown = day.strftime("%m-%d") if day.year == today.year else renews
+    days = (day - today).days
+    if days == 0:
+        return "{} (today!)".format(shown)
+    if days < 0:
+        return "{} ({}d ago)".format(shown, -days)
+    if days <= 3:
+        return "{} ({}d!)".format(shown, days)
+    return "{} ({}d)".format(shown, days)
+
+
+def _renews_dict(renews: Optional[str], today: date) -> Optional[dict]:
+    """--json 的 renews 键：没填为 None；days_left 可为负数（日期已过）。"""
+    if not renews:
+        return None
+    return {"date": renews, "days_left": _renews_days(renews, today)}
+
+
+def _report_renewals(config: Config, today: date) -> None:
+    """续费日已过的账号打一行到 stderr：多半是商店已自动续费、用户还没更新日期。走 stderr 不混进 --json。"""
+    passed = [name for name, account in config.accounts.items()
+              if account.renews and _renews_days(account.renews, today) < 0]
+    if passed:
+        print("{} renewal date has passed for {}: check the store's subscription page, then run "
+              "multi-claude set NAME --renews YYYY-MM-DD (or --renews off)".format(LOG_PREFIX, ", ".join(passed)),
+              file=sys.stderr)
 
 
 def _report_plan_problems(plans: Optional[dict]) -> None:
@@ -1436,13 +1570,17 @@ def _print_brief_list(config: Config, plans: Optional[dict] = None) -> int:
         # 与完整输出相同：LOGIN 与由它得出的 STATUS 都按正式服务探测，这时可能不准。
         warn("CLAUDE_CODE_CUSTOM_OAUTH_URL is set; LOGIN assumes the production service and may be wrong")
     now = datetime.now(timezone.utc)
-    rows = [("NAME", "LOGIN") + _plan_header(plans) + ("PROXY", "SHARED", "5H", "7D", "LAST USED", "STATUS")]
+    today = _local_today()
+    renews_shown = _has_renewals(config)
+    rows = [("NAME", "LOGIN") + _plan_header(plans) + _renews_header(renews_shown)
+            + ("PROXY", "SHARED", "5H", "7D", "LAST USED", "STATUS")]
     has_problem = False
     for entry in _account_entries(config):
         report = usage.read_account_usage(config, config.find(entry["name"]), now)
         status = _status_cell(entry)
         has_problem = has_problem or status != "ok"
         rows.append((entry["name"], entry["login"]) + _plan_cells(plans, entry["name"])
+                    + _renews_cells(renews_shown, config.find(entry["name"]).renews, today)
                     + (entry["proxy"], _shared_cell(entry),
                        _window_cell(report.five_hour, now), _window_cell(report.seven_day, now),
                        _last_used_cell(entry["last_used"], now), status))
@@ -1451,6 +1589,7 @@ def _print_brief_list(config: Config, plans: Optional[dict] = None) -> int:
     if has_problem:
         print("run multi-claude doctor for details")
     _report_plan_problems(plans)
+    _report_renewals(config, today)
     accounts.warn_launch_settings(config, None, note_invalid=True)
     return accounts.EXIT_OK
 
@@ -1493,9 +1632,11 @@ def _shared_cell(entry: dict) -> str:
     return "yes"
 
 
-def _account_entries(config: Config, with_usage: bool = False, plans: Optional[dict] = None) -> List[dict]:
+def _account_entries(config: Config, with_usage: bool = False, plans: Optional[dict] = None,
+                     today: Optional[date] = None) -> List[dict]:
     """list 的表格与 JSON 共用的每账号数据；表格的列取自这里，保证两种输出口径一致。"""
     now = datetime.now(timezone.utc)
+    today = today or _local_today()
     entries = []
     for name, account in config.accounts.items():
         directory = accounts.account_dir(config, name)
@@ -1515,6 +1656,7 @@ def _account_entries(config: Config, with_usage: bool = False, plans: Optional[d
             "credentials_file": identity.credentials_file(directory),
             # history.jsonl 与会话文件的最大 mtime；只 stat 不读内容（方案 feature-usage-history §5.1.3）
             "last_used": _iso(history.last_used(directory)),
+            "renews": _renews_dict(account.renews, today),
         }
         if with_usage:
             entry["usage"] = usage.report_to_dict(usage.read_account_usage(config, account, now), now)
@@ -1525,7 +1667,7 @@ def _account_entries(config: Config, with_usage: bool = False, plans: Optional[d
     return entries
 
 
-def _list_data(config: Config, exists: bool, plans: Optional[dict] = None) -> dict:
+def _list_data(config: Config, exists: bool, plans: Optional[dict] = None, today: Optional[date] = None) -> dict:
     if not exists:
         return {"schema_version": 1, "configured": False, "accounts": [],
                 "routes": {"default": None, "rules": []}}
@@ -1535,7 +1677,7 @@ def _list_data(config: Config, exists: bool, plans: Optional[dict] = None) -> di
         "root": expand(config.root),
         "bin_dir": expand(config.bin_dir),
         "shared_dir": expand(config.shared_dir) if config.shared_dir else None,
-        "accounts": _account_entries(config, with_usage=True, plans=plans),
+        "accounts": _account_entries(config, with_usage=True, plans=plans, today=today),
         "routes": {"default": config.route_default,
                    "rules": [{"path": rule.path, "account": rule.account, "exists": os.path.isdir(expand(rule.path))}
                              for rule in config.route_rules]},

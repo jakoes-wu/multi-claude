@@ -304,6 +304,19 @@ old    keychain  token expired  -       inherit                no      -        
 - `error` comes with a reason on stderr, for example `plan lookup failed for work: timeout (via 127.0.0.1:7890, 10.01s)`. `tls_failed` usually means the Python that runs multi-claude has no root certificates (python.org installers ship an `Install Certificates.command`).
 - `list --offline` skips the lookup — no token is read, nothing is sent — and prints the table without the two columns. `list --json` carries the same data in each account's `plan` object (`refresh` tells whether a token was renewed); scripts should use it instead of parsing the table. The lookup adds about a second, at most 15; a renewal that is under way is allowed to finish first (the first Ctrl-C only prints a notice), so that the new login is not lost.
 
+#### Renewal date
+
+Anthropic's interface does not say when a subscription renews, and the date it implies is wrong for an account whose subscription was stopped and started again. Copy the date from the store's subscription page (App Store or Google Play) instead:
+
+```sh
+multi-claude set work --renews 2026-11-10   # the date the store shows
+multi-claude set work --renews off          # forget it
+```
+
+Once any account has a date, `list` adds a `RENEWS` column (also with `--offline`, since nothing is looked up): `11-10 (25d)` is 25 days away, `10-19 (3d!)` three days or less, `10-16 (today!)` today, `10-10 (6d ago)` already passed. A date in another year is written in full, `2027-01-05 (81d)`. Days are counted in your local time zone. When a date has passed — usually because the store renewed the subscription — `list` reminds you on stderr to look up the new date. Accounts without a date show `-`; without any dates the table is unchanged.
+
+`list --json` gives each account `"renews": {"date": "2026-11-10", "days_left": 25}` (`days_left` is negative once the date has passed), or `null`. The date is stored as `renews` in `config.json`; `apply -f FILE` treats it like any other account setting, so an account whose entry in FILE has no `renews` loses its date.
+
 ### Finding a session
 
 Forgot which account or which directory a session was started in? `sessions` lists the sessions of every account and every project directory, newest first; `--cmd` adds the command that resumes each one:
@@ -502,14 +515,14 @@ It never copies, exports, uploads or backs up a login. One command touches one: 
 | `multi-claude restore NAME [--skip-process-check] [--dry-run]` | Undo `migrate-default`: move the account back to `~/.claude` and unregister it. The login is kept. |
 | `multi-claude export NAME FILE` | Write the account's settings, `CLAUDE.md`, agents, commands, skills, output styles and MCP servers to FILE. No logins or sessions. |
 | `multi-claude import FILE NAME [--force] [--dry-run]` | Import such a file into an existing account; conflicts are refused unless `--force` (which backs up first). |
-| `multi-claude add NAME [--proxy P] [--shared [DIR] \| --no-shared] [--adopt] [--shared-exclude ITEM] [--shared-include ITEM] [--config-from OTHER]` | Add an account, adopt an existing directory, or change its options. `--config-from` copies `settings.json` from OTHER once. `--shared DIR` also makes DIR the shared directory for every account (default `~/.claude-shared`). `--shared-exclude` keeps one shared item out of this account; `--shared-include` undoes it. |
-| `multi-claude set NAME [--proxy P] [--shared [DIR] \| --no-shared] [--shared-exclude ITEM] [--shared-include ITEM]` | Change an existing account; same options as `add` without `--adopt`. Returns 1 for an account that is not registered. |
+| `multi-claude add NAME [--proxy P] [--shared [DIR] \| --no-shared] [--adopt] [--shared-exclude ITEM] [--shared-include ITEM] [--renews DATE\|off] [--config-from OTHER]` | Add an account, adopt an existing directory, or change its options. `--config-from` copies `settings.json` from OTHER once. `--renews` records the renewal date (see [Renewal date](#renewal-date)). `--shared DIR` also makes DIR the shared directory for every account (default `~/.claude-shared`). `--shared-exclude` keeps one shared item out of this account; `--shared-include` undoes it. |
+| `multi-claude set NAME [--proxy P] [--shared [DIR] \| --no-shared] [--shared-exclude ITEM] [--shared-include ITEM] [--renews DATE\|off]` | Change an existing account; same options as `add` without `--adopt`. Returns 1 for an account that is not registered. |
 | `multi-claude proxy NAME PORT\|URL\|off\|inherit` | Set an account's proxy. |
 | `multi-claude env (NAME \| --defaults) [K=V ...] [--unset K ...]` | Set or remove extra environment variables. |
 | `multi-claude args (NAME \| --defaults) -- [ARG ...]` | Replace the fixed arguments; `--` with nothing after it clears them. |
 | `multi-claude remove NAME` | Unregister an account and delete its launcher. **The directory and the login are kept.** |
 | `multi-claude apply [-f FILE]` | Converge everything to the configuration (or to `FILE`). |
-| `multi-claude list [--verbose \| --json \| --names] [--no-refresh] [--offline]` | Show accounts, launchers, login state and the plan and billing channel looked up from Anthropic. `--json` adds usage and is meant for scripts; `--names` prints only the names; `--no-refresh` does not renew expired access tokens (never writes to a login); `--offline` skips the plan lookup (no token read, no network). |
+| `multi-claude list [--verbose \| --json \| --names] [--no-refresh] [--offline]` | Show accounts, launchers, login state and the plan and billing channel looked up from Anthropic. `--json` adds usage and is meant for scripts; `--names` prints only the names; `--no-refresh` does not renew expired access tokens (never writes to a login); `--offline` skips the plan lookup (no token read, no network). A `RENEWS` column (and a `renews` key in `--json`) shows the renewal dates you recorded. |
 | `multi-claude usage [NAME] [--json]` | Show the last known 5-hour and 7-day usage of each account. |
 | `multi-claude usage --history [NAME] [--days N] [--by day\|model] [--json]` | Token usage per day or model, counted from the session files on this machine (default: 7 days). |
 | `multi-claude doctor [--json] [--verbose]` | Check the configuration, launchers, account directories, shared links, logins and environment. |
