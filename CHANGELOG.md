@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Every command's `--help` now ends with examples that cover its options and
+  values (before, only `add`, `set` and `list` had them). A test parses every
+  example the way `multi-claude` does and runs most of them in a sandbox.
+
 ## [0.13.0] - 2026-10-17
 
 ### Added

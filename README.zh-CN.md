@@ -508,6 +508,8 @@ multi-claude remove main         # 注销账号
 
 ### 命令
 
+每个命令的 `--help` 末尾都列有可直接照抄的示例，覆盖该命令的选项，例如 `multi-claude route --help`。
+
 | 命令 | 作用 |
 | ---- | ---- |
 | `multi-claude init [--root DIR] [--bin-dir DIR] [--shared-dir DIR] [--shared-items A,B]` | 创建或修改全局设置 |

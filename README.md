@@ -508,6 +508,8 @@ It never copies, exports, uploads or backs up a login. One command touches one: 
 
 ### Commands
 
+Every command's `--help` ends with examples you can copy, covering its options, e.g. `multi-claude route --help`.
+
 | Command | What it does |
 | ---- | ---- |
 | `multi-claude init [--root DIR] [--bin-dir DIR] [--shared-dir DIR] [--shared-items A,B]` | Create or change global settings. |
