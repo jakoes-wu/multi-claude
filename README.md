@@ -1,12 +1,13 @@
 # multi-claude
 
-**English** | [简体中文](README.zh-CN.md)
+**English** | [简体中文](https://github.com/jakoes-wu/multi-claude/blob/main/README.zh-CN.md)
 
 [![Release](https://img.shields.io/github/v/release/jakoes-wu/multi-claude)](https://github.com/jakoes-wu/multi-claude/releases)
 [![CI](https://github.com/jakoes-wu/multi-claude/actions/workflows/ci.yml/badge.svg)](https://github.com/jakoes-wu/multi-claude/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/multi-claude-cli)](https://pypi.org/project/multi-claude-cli/)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/jakoes-wu/multi-claude/blob/main/LICENSE)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 
 Use several [Claude Code](https://code.claude.com/docs) accounts on one machine, at the same time. Each account keeps its own login, settings and history and, if you like, its own proxy. No more logging out and in again.
 
@@ -556,7 +557,7 @@ Account names may contain letters, digits and `._@+-`, must start with a letter 
 
 ### Declarative setup with `apply`
 
-See [`examples/config.example.json`](examples/config.example.json):
+See [`examples/config.example.json`](https://github.com/jakoes-wu/multi-claude/blob/main/examples/config.example.json):
 
 ```json
 {
@@ -617,7 +618,7 @@ This removes the tool only. Your configuration, account directories (including t
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Run the tests with:
+See [CONTRIBUTING.md](https://github.com/jakoes-wu/multi-claude/blob/main/CONTRIBUTING.md). Run the tests with:
 
 ```sh
 python3 -m unittest discover -s tests -t tests
@@ -625,4 +626,4 @@ python3 -m unittest discover -s tests -t tests
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/jakoes-wu/multi-claude/blob/main/LICENSE)

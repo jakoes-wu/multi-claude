@@ -30,6 +30,12 @@ jobs:
         run: python -m pip install pyflakes
       - name: Lint
         run: python -m pyflakes src tests
+      - name: README links
+        # README.md is also the PyPI project page, where relative links 404: allow only full URLs and in-page anchors.
+        run: |
+          if grep -noE '\]\([^)]+\)' README.md | grep -vE '\]\((https?://|#)'; then
+            echo 'README.md has relative links; use https://github.com/jakoes-wu/multi-claude/blob/main/... instead'; exit 1
+          fi
       - name: Tests must not hard-code home directories
         # helpers.py builds every path from a temporary directory; nothing else may name a real home.
         run: "! grep -rnE '/Users/|/home/' tests --include='*.py' --exclude=helpers.py"
