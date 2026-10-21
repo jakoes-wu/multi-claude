@@ -65,3 +65,7 @@ resuming from it is covered.
 2. Add or update tests for the behavior you change.
 3. Update both `README.md` and `README.zh-CN.md` when user-facing behavior
    changes, and add an entry to `CHANGELOG.md`.
+4. `README.md` is also the PyPI project page, so its links must be full URLs
+   (`https://github.com/jakoes-wu/multi-claude/blob/main/...`) or in-page anchors, never
+   relative paths, which 404 on PyPI; CI checks this. `README.zh-CN.md` is not
+   restricted.

@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- README: links in `README.md` are full URLs so they work on the PyPI project page (CI now checks
+  this), and a platform badge (macOS | Linux) was added.
+
 ## [0.14.0] - 2026-10-17
 
 ### Added
