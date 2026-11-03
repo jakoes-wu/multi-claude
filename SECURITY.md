@@ -56,3 +56,9 @@ steps to reproduce. You should receive a reply within a week.
 - Generated launchers are world-readable; proxy URLs with credentials are
   rejected for that reason.
 - New account directories are created with mode `0700`.
+- On Windows, mode bits do not apply: account directories inherit the access
+  rules of `%USERPROFILE%`, which by default only you, administrators and the
+  system can read. Launchers (`.cmd`) contain only the account name and
+  paths; proxies, variables and arguments are read from `config.json` at
+  start. The busy check for `migrate-default` and `restore` only reads the
+  process list and never signals another process.

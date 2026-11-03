@@ -12,6 +12,7 @@ import platform as py_platform
 import re
 import shlex
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -268,6 +269,7 @@ _SUBCOMMAND_EXAMPLES = {
         ("multi-claude completion bash > ~/.local/share/bash-completion/completions/multi-claude", "bash completion for your user"),
         ('multi-claude completion zsh > "${fpath[1]}/_multi-claude"', "zsh: any directory on your fpath"),
         ("multi-claude completion fish > ~/.config/fish/completions/multi-claude.fish", "fish completion"),
+        ("multi-claude completion powershell | Add-Content $PROFILE", "PowerShell: add to your profile"),
     ],
     "statusline": [
         ("multi-claude statusline install ~/.claude/settings.json", "record fresh usage from the status line"),
@@ -601,6 +603,12 @@ def _split_args_command(argv: List[str]) -> Tuple[List[str], Optional[List[str]]
     return argv[:separator], argv[separator + 1:]
 
 
+UNSUPPORTED_PLATFORM = "this platform is not supported yet (macOS, Linux and Windows only)"
+# Windows 启动命令调用的隐藏子命令
+LAUNCH_COMMAND = "launch"
+LAUNCH_SEPARATOR = "--"
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == [hook.HOOK_COMMAND]:
@@ -609,6 +617,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             error("usage: multi-claude {} COMMAND".format(hook.HOOK_COMMAND))
             return accounts.EXIT_USAGE
         return hook.main(argv[1:])
+    if platform.IS_WINDOWS and argv[:1] == [LAUNCH_COMMAND]:
+        # Windows 启动命令 claude-<名称>.cmd / claude-auto.cmd 的入口（方案 feature-windows-support D3）：
+        # 不走 argparse，免得用户参数里的 --help 之类被当成本工具的选项；只在 Windows 上存在，POSIX 子命令集合不变。
+        return cmd_launch(argv[1:])
+    if platform.IS_WINDOWS and argv[:1] == [hook.CAPTURE_COMMAND]:
+        # 状态栏钩子在 Windows 上不能 fork，改为起一个后台进程跑本命令采集用量（方案 F1）
+        return hook.capture_main()
     if not argv:
         # 不带参数：新用户先看到怎么上手，已有配置的用户看到账号表（方案 feature-easier-onboarding §5.1.1）。
         return cmd_overview()
@@ -631,7 +646,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args.launch_args = launch_args
 
     if not platform.is_supported():
-        error("this platform is not supported yet (macOS and Linux only)")
+        error(UNSUPPORTED_PLATFORM)
         return accounts.EXIT_ERROR
 
     # completion 与 doctor 在读取迁移记录之前分派：前者不依赖任何状态，后者要把损坏的配置或
@@ -781,7 +796,7 @@ def dispatch(args: argparse.Namespace) -> int:
             new.shared_dir = args.shared_dir
         if args.shared_items is not None:
             items = [item.strip() for item in args.shared_items.split(",") if item.strip()]
-            if any(item in (".", "..") or "/" in item for item in items):
+            if any(item in (".", "..") or _has_path_char(item) for item in items):
                 raise UsageError("--shared-items must be plain names without '/'")
             unshareable = [item for item in items if is_unshareable(item)]
             if unshareable:
@@ -998,7 +1013,7 @@ def _copy_settings(planned: Tuple[str, str, int, str], dry_run: bool) -> int:
 def _apply_shared_exclude(config: Config, account: Account, exclude: List[str], include: List[str]) -> None:
     """add 的 --shared-exclude / --shared-include：先撤销再排除。只改配置，链接由随后的收敛计划处理。"""
     for item in exclude + include:
-        if item in (".", "..") or "/" in item or not item:
+        if item in (".", "..") or _has_path_char(item) or not item:
             raise UsageError("shared items must be plain names without '/': {!r}".format(item))
     both = sorted(set(exclude) & set(include))
     if both:
@@ -1086,7 +1101,7 @@ def _account_process_env(name: str) -> Tuple[Optional[dict], int]:
     process_env, code = _usable_account_env(config, account)
     if process_env is None:
         return None, code
-    if shutil.which("claude", path=process_env.get("PATH")) is None:
+    if platform.which("claude", process_env.get("PATH")) is None:
         error("claude not found in PATH" + _CLAUDE_NOT_FOUND_HINT)
         return None, 127
     return process_env, accounts.EXIT_OK
@@ -1139,8 +1154,80 @@ def cmd_run(name: Optional[str], command: List[str]) -> int:
 
 # 找不到 claude 时附上的官方安装方法（https://code.claude.com/docs/en/setup，2026-10-03 核对）。
 # 只用于 multi-claude 自己的报错：启动命令里的文字不改，改了所有启动命令都会变成过期。
-_CLAUDE_NOT_FOUND_HINT = ("; install Claude Code: curl -fsSL https://claude.ai/install.sh | bash "
-                          "(other ways: https://code.claude.com/docs/en/setup)")
+_CLAUDE_NOT_FOUND_HINT = ("; install Claude Code: {} (other ways: https://code.claude.com/docs/en/setup)".format(
+    "irm https://claude.ai/install.ps1 | iex" if platform.IS_WINDOWS
+    else "curl -fsSL https://claude.ai/install.sh | bash"))
+
+
+def _call_command(command: List[str], process_env: dict) -> int:
+    """运行子程序并等它结束，返回它的退出码（mcp、login 共用；Windows 上 run / code / launch 也用它）。
+
+    POSIX 与原实现相同。Windows 没有 exec（os.exec* 是另起进程后父进程立即退出，控制台会乱），所以等子进程结束：
+    - 按 PATH 找完整路径，不查当前目录：项目目录里放一个 claude.cmd 不能被执行到；
+    - Ctrl+C 会发给同一控制台里的所有进程，本进程忽略它，交给 Claude 自己处理，否则本进程先退出、Claude 被留在后台。
+    """
+    if not platform.IS_WINDOWS:
+        return subprocess.call(command, env=process_env)
+    executable = platform.which(command[0], process_env.get("PATH"))
+    if executable is None:
+        error("{} not found in PATH".format(command[0]))
+        return 127
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    return subprocess.call([executable] + command[1:], env=process_env)
+
+
+def cmd_launch(argv: List[str]) -> int:
+    """Windows 启动命令的实际执行者：`launch NAME -- ARGS` 对应 claude-NAME.cmd，`launch -- ARGS` 对应 claude-auto.cmd。
+
+    输出与失败文案逐条对齐 POSIX 的 sh 模板（launcher.render、routes.render_router），而不是 run 的报错：
+    启动命令的表现必须与直接运行 claude 一样，不打印“using account”，报错不带 [multi-claude] 前缀。
+    """
+    if LAUNCH_SEPARATOR not in argv or argv.index(LAUNCH_SEPARATOR) > 1:
+        sys.stderr.write("multi-claude: usage: multi-claude launch [NAME] -- [ARGS...]\n")
+        return accounts.EXIT_USAGE
+    separator = argv.index(LAUNCH_SEPARATOR)
+    name = argv[0] if separator == 1 else None
+    user_args = argv[separator + 1:]
+    try:
+        config, _ = load_config()
+        if name is None:
+            account, rule = routes.resolve(config, os.getcwd())
+            target = rule.account if rule is not None else config.route_default
+            if account is None and target is not None:
+                # POSIX 版此时 exec 一个不存在的启动命令，sh 报 not found 并以 127 退出
+                sys.stderr.write("multi-claude: account {!r} used by the route is not registered; "
+                                 "run multi-claude doctor\n".format(target))
+                return 127
+            if account is None:
+                # 没有规则也没有默认账号：原样运行 claude，不加账号环境与固定参数
+                return _launch_claude(["claude"] + user_args, dict(os.environ))
+        else:
+            account = config.find(name)
+            if account is None:
+                sys.stderr.write("multi-claude: account {!r} is not registered; run multi-claude apply\n".format(name))
+                return accounts.EXIT_ERROR
+        directory = accounts.account_dir(config, account.name)
+        if not os.path.isdir(directory):
+            sys.stderr.write("multi-claude: account directory does not exist: {}\n".format(directory))
+            return accounts.EXIT_ERROR
+        if account.identity == IDENTITY_DEFAULT and accounts.default_link_status(config, account) != "ok":
+            sys.stderr.write("multi-claude: {} no longer points to {}; restore the link or run "
+                             "multi-claude migrate-default again\n".format(accounts.default_dir(), directory))
+            return accounts.EXIT_ERROR
+        command = (["claude"] + [launcher.expand_value(arg) for arg in config.effective_args(account)]
+                   + user_args)
+        return _launch_claude(command, account_env(config, account, os.environ))
+    except (ConfigError, OSError) as exc:
+        sys.stderr.write("multi-claude: {}\n".format(exc))
+        return accounts.EXIT_ERROR
+
+
+def _launch_claude(command: List[str], process_env: dict) -> int:
+    # 文案与 sh 模板相同，不带安装提示：启动命令里的文字与 POSIX 版保持一致
+    if platform.which(command[0], process_env.get("PATH")) is None:
+        sys.stderr.write("multi-claude: claude not found in PATH\n")
+        return 127
+    return _call_command(command, process_env)
 
 
 def _exec_as(config: Config, account: Account, command: List[str], not_found_hint: str = "") -> int:
@@ -1151,11 +1238,13 @@ def _exec_as(config: Config, account: Account, command: List[str], not_found_hin
     process_env, code = _usable_account_env(config, account)
     if process_env is None:
         return code
-    if shutil.which(command[0], path=process_env.get("PATH")) is None:
+    if platform.which(command[0], process_env.get("PATH")) is None:
         error("{} not found in PATH{}".format(command[0], not_found_hint))
         return 127
     sys.stdout.flush()
     sys.stderr.flush()
+    if platform.IS_WINDOWS:
+        return _call_command(command, process_env)
     # exec 失败（权限、格式错误）抛 OSError，由 main 统一按退出码 1 报告。
     os.execvpe(command[0], command, process_env)
     return accounts.EXIT_ERROR  # 不会执行到这里：execvpe 成功后不返回
@@ -1186,7 +1275,7 @@ def cmd_code(name: str, path: Optional[str], code_args: List[str]) -> int:
     process_env, code = _usable_account_env(config, account)
     if process_env is None:
         return code
-    if shutil.which("code", path=process_env.get("PATH")) is None:
+    if platform.which("code", process_env.get("PATH")) is None:
         error("code not found in PATH{}".format(_CODE_NOT_FOUND_HINT))
         return 127
     data_dir = _private_dirs(expand(config.root), [".apps", account.dir, "vscode"])
@@ -1229,7 +1318,7 @@ def cmd_mcp(name: str, claude_args: List[str]) -> int:
     process_env, code = _account_process_env(name)
     if process_env is None:
         return code
-    return subprocess.call(["claude", "mcp"] + claude_args, env=process_env)
+    return _call_command(["claude", "mcp"] + claude_args, process_env)
 
 
 # 只用于判断“账号名看起来像邮箱”，以便给登录页预填；不做完整的邮箱校验。
@@ -1248,14 +1337,14 @@ def cmd_login(name: str, claude_args: List[str]) -> int:
     login_args = list(claude_args)
     if _EMAIL_LIKE.match(name) and not any(arg == "--email" or arg.startswith("--email=") for arg in login_args):
         login_args += ["--email", name]
-    return subprocess.call(["claude", "auth", "login"] + login_args, env=process_env)
+    return _call_command(["claude", "auth", "login"] + login_args, process_env)
 
 
 def cmd_overview() -> int:
     """不带参数时的输出：没有配置就给上手步骤，有配置就显示账号表。"""
     if not platform.is_supported():
         # 与其它命令一致：不支持的平台上先报平台错误，不给出走不通的上手步骤。
-        error("this platform is not supported yet (macOS and Linux only)")
+        error(UNSUPPORTED_PLATFORM)
         return accounts.EXIT_ERROR
     if not os.path.exists(config_path()):
         print(_GETTING_STARTED, end="")
@@ -1391,7 +1480,14 @@ def _has_account_option(args: argparse.Namespace) -> bool:
 
 
 def _looks_like_path(value: str) -> bool:
+    if platform.IS_WINDOWS and ("\\" in value or value[1:2] == ":"):
+        return True
     return "/" in value or value.startswith(("~", "."))
+
+
+def _has_path_char(item: str) -> bool:
+    """共享条目名里出现路径字符：Windows 上 \\ 是分隔符，: 会被当成盘符或备用数据流。"""
+    return "/" in item or (platform.IS_WINDOWS and ("\\" in item or ":" in item))
 
 
 # add/set 里取一个值的选项：判断位置参数时要跳过它们的值。
@@ -1455,9 +1551,7 @@ def _hint_empty_shared_dir(config: Config, name: str) -> None:
 def _hint_bin_on_path(config: Config, name: str) -> None:
     """启动命令目录不在 PATH 上时，`claude-NAME` 会找不到；给出按当前 shell 可直接粘贴的命令。"""
     bin_dir = expand(config.bin_dir)
-    entries = [os.path.abspath(os.path.expanduser(entry)) for entry in os.environ.get("PATH", "").split(os.pathsep)
-               if entry]
-    if bin_dir in entries:
+    if shellpath.on_path(bin_dir, os.environ.get("PATH", "")):
         return
     account = config.find(name)
     launcher_name = "claude-" + (account.name if account is not None else name)
@@ -2033,7 +2127,7 @@ def cmd_handoff(target_name: str, source_name: Optional[str], session_id: Option
             target.name, handoff.session_id), phase="handoff", path=target_file)
         return accounts.EXIT_CONFLICT
     # cd 到找到会话时用的写法（物理路径或软链写法的 $PWD），目标账号才会按同一目录名找到会话。
-    resume = "cd {} && claude-{} --resume {}".format(shlex.quote(handoff.cwd), target.name, handoff.session_id)
+    resume = _cd_and_run(handoff.cwd, "claude-{} --resume {}".format(target.name, handoff.session_id))
     if handoff.state == sessions.UNCHANGED:
         info("handoff: session {} is already in {} (unchanged)".format(handoff.session_id, target.name))
     elif dry_run:
@@ -2070,7 +2164,9 @@ class _SessionSource(NamedTuple):
 _UNREGISTERED_DEFAULT = "default"
 # 未登记的默认目录没有启动命令，只能直接运行 claude；去掉这两个变量，在别的账号的 Claude 会话里
 # 运行也会落到默认目录（default 身份的启动命令同样先 unset 它们）。
-_DEFAULT_LAUNCHER = "env -u CLAUDE_CONFIG_DIR -u CLAUDE_SECURESTORAGE_CONFIG_DIR claude"
+_DEFAULT_LAUNCHER = ("$env:CLAUDE_CONFIG_DIR=$null; $env:CLAUDE_SECURESTORAGE_CONFIG_DIR=$null; claude"
+                     if platform.IS_WINDOWS
+                     else "env -u CLAUDE_CONFIG_DIR -u CLAUDE_SECURESTORAGE_CONFIG_DIR claude")
 _SESSIONS_TEXT_LIMIT = 30
 # 标题来自会话内容，可能是整段粘贴的提问：表格里只留开头，JSON 里也设上限
 _TITLE_TEXT_CHARS = 60
@@ -2314,8 +2410,17 @@ def _resume_command(source: _SessionSource, session: sessions.SessionInfo, tilde
     resume = "{} --resume {}".format(source.launcher, session.session_id)
     if session.directory is None:
         return resume
+    if platform.IS_WINDOWS:
+        return _cd_and_run(session.directory, resume)
     target = _tilde_path(session.directory) if tilde else shlex.quote(session.directory)
     return "cd {} && {}".format(target, resume)
+
+
+def _cd_and_run(directory: str, command: str) -> str:
+    """先进入 directory 再运行 command 的一行命令。Windows 上写成 PowerShell（单引号串里只有 ' 需要写成 ''）。"""
+    if platform.IS_WINDOWS:
+        return "Set-Location '{}'; {}".format(directory.replace("'", "''"), command)
+    return "cd {} && {}".format(shlex.quote(directory), command)
 
 
 def _tilde_path(directory: str) -> str:
@@ -2376,7 +2481,7 @@ def cmd_statusline(action: str, path: str, dry_run: bool) -> int:
     try:
         if action == "install":
             # 包装命令里写的是绝对路径：Claude 执行 statusLine 时的 PATH 不一定含 multi-claude 所在目录。
-            executable = shutil.which(statusline.EXECUTABLE)
+            executable = platform.which(statusline.EXECUTABLE)
             if executable is None:
                 error("{} is not on PATH; the wrapped statusLine needs its full path".format(statusline.EXECUTABLE),
                       phase="statusline")

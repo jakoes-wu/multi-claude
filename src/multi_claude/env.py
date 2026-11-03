@@ -8,7 +8,7 @@
 
 from typing import Dict, Mapping
 
-from . import accounts, launcher
+from . import accounts, launcher, platform
 from .config import IDENTITY_DEFAULT, PROXY_INHERIT, PROXY_OFF, PROXY_VARS, Account, Config
 
 
@@ -32,6 +32,9 @@ def account_env(config: Config, account: Account, base: Mapping[str, str]) -> Di
 def _apply_proxy(env: Dict[str, str], proxy: str) -> None:
     if proxy == PROXY_INHERIT:
         return
+    if platform.IS_WINDOWS:
+        _apply_proxy_windows(env, proxy)
+        return
     if proxy == PROXY_OFF:
         for name in PROXY_VARS:
             env.pop(name, None)
@@ -44,3 +47,23 @@ def _apply_proxy(env: Dict[str, str], proxy: str) -> None:
     for name in ("NO_PROXY", "no_proxy"):
         current = env.get(name, "")
         env[name] = "{},{}".format(current, launcher._NO_PROXY_HOSTS) if current else launcher._NO_PROXY_HOSTS
+
+
+def _apply_proxy_windows(env: Dict[str, str], proxy: str) -> None:
+    """Windows 的环境变量名不分大小写：同一个变量的大小写两种写法同时传给子进程，生效哪个说不准。
+
+    所以先按大写比较删掉所有代理变量（含用户环境里的小写写法），再只写大写键；NO_PROXY 的原值大小写写法都认。
+    """
+    proxy_keys = {name.upper() for name in PROXY_VARS}
+    current_no_proxy = ""
+    for key in list(env):
+        if key.upper() in proxy_keys:
+            if key.upper() == "NO_PROXY" and env[key] and not current_no_proxy:
+                current_no_proxy = env[key]
+            del env[key]
+    if proxy == PROXY_OFF:
+        return
+    env["HTTPS_PROXY"] = proxy
+    env["HTTP_PROXY"] = proxy
+    env["NO_PROXY"] = ("{},{}".format(current_no_proxy, launcher._NO_PROXY_HOSTS) if current_no_proxy
+                       else launcher._NO_PROXY_HOSTS)

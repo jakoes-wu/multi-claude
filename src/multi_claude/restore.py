@@ -80,10 +80,15 @@ def restore(name: str, skip_process_check: bool, dry_run: bool) -> int:
             if code:
                 return code
         if state == STATE_LINKED:
-            os.unlink(source)
+            platform.remove_link(source)
             info("restore: removed the link {}".format(source))
             migrate._test_hook("restore-unlinked")
-        os.rename(target, source)
+        try:
+            os.rename(target, source)
+        except PermissionError as exc:
+            if not platform.is_sharing_violation(exc):
+                raise
+            return _restore_link_after_busy(state, source, target, exc)
         info("restore: moved {} to {}".format(target, source))
         migrate._test_hook("restore-moved")
     elif dry_run:
@@ -96,6 +101,22 @@ def restore(name: str, skip_process_check: bool, dry_run: bool) -> int:
         info("restore: unregistered {}; plain `claude` uses {} again with the same login".format(
             account.name, source))
     return code
+
+
+def _restore_link_after_busy(state: str, source: str, target: str, exc: PermissionError) -> int:
+    """Windows 上账号目录被占用、搬不回去：把刚删掉的链接建回，回到 restore 之前的状态，返回 4。
+
+    建回失败时 ~\\.claude 不存在、数据仍在账号目录，打印两个路径让用户处理，返回 1。
+    """
+    error(platform.in_use_message(target, exc), phase="restore")
+    if state == STATE_LINKED:
+        try:
+            platform.create_link(target, source)
+        except OSError as link_exc:
+            error("cannot recreate the link {} -> {}: {}; the data is still in {}".format(
+                source, target, link_exc, target), phase="restore")
+            return accounts.EXIT_ERROR
+    return accounts.EXIT_BUSY
 
 
 def _classify(source: str, target: str) -> Optional[str]:
@@ -117,7 +138,7 @@ def _classify(source: str, target: str) -> Optional[str]:
 def _describe(path: str) -> str:
     kind = entry_kind(path)
     if kind == KIND_LINK:
-        return "a link to {}".format(os.readlink(path))
+        return "a link to {}".format(platform.read_link(path))
     if kind == KIND_DIR:
         return "a directory"
     if kind == KIND_MISSING:

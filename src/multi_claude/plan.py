@@ -221,7 +221,10 @@ def _signals_as_interrupt(interrupts: _Interrupts):
         interrupts.terminated = True
 
     previous = {}
-    for number in (signal.SIGTERM, signal.SIGHUP):
+    # Windows 没有 SIGHUP，跳过
+    for number in (signal.SIGTERM, getattr(signal, "SIGHUP", None)):
+        if number is None:
+            continue
         try:
             old = signal.getsignal(number)
             # None 表示原处理方式不是 Python 设置的（被别的程序嵌入时），之后没法原样恢复，所以不接管

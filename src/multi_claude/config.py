@@ -49,8 +49,9 @@ IDENTITIES = (IDENTITY_DIR, IDENTITY_DEFAULT)
 ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # 改变账号身份的变量：写进启动命令会静默改变登录绑定（方案 §5.1.5）。
+# USERPROFILE 等是 Windows 上决定家目录与配置位置的变量，作用与 HOME 相同（方案 feature-windows-support §5.1 B4）。
 _IDENTITY_KEYS = ("CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR", "CLAUDE_CODE_CUSTOM_OAUTH_URL",
-                  "HOME", "USER")
+                  "HOME", "USER", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA")
 # 官方 env-vars 页列出的凭据变量；启动命令是 0755 明文文件，写进去即泄露。
 _CREDENTIAL_KEYS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
                     "CLAUDE_CODE_OAUTH_REFRESH_TOKEN", "ANTHROPIC_FOUNDRY_API_KEY", "ANTHROPIC_AWS_API_KEY",
@@ -333,12 +334,29 @@ def validate_route_path(path: object) -> str:
     """规则目录必须是绝对路径（可用 ~）且不是 /；返回 expand 后的路径。"""
     if not isinstance(path, str) or not path:
         raise ValueError("route path must be a non-empty string")
+    if platform.IS_WINDOWS:
+        return _validate_route_path_windows(path)
     if not (path.startswith("/") or path == "~" or path.startswith("~/")):
         raise ValueError("route path {!r} must be absolute or start with ~/".format(path))
     validate_value(path)
     expanded = expand(path)
     if expanded == "/":
         raise ValueError("route path must not be / (use `route --default` instead)")
+    return expanded
+
+
+def _validate_route_path_windows(path: str) -> str:
+    """Windows：带盘符的绝对路径，或 `~`、`~/`、`~\\` 开头；不能是盘符根目录（如 C:\\）。
+
+    `\\work` 这种没有盘符的路径 isabs 也为真，但它跟着当前盘符变，规则会随所在盘漂移，所以要求带盘符或 UNC 前缀。
+    """
+    has_drive = os.path.isabs(path) and bool(os.path.splitdrive(path)[0])
+    if not (has_drive or path == "~" or path.startswith("~/") or path.startswith("~\\")):
+        raise ValueError("route path {!r} must be absolute or start with ~\\".format(path))
+    validate_value(path)
+    expanded = expand(path)
+    if os.path.splitdrive(expanded)[1] in ("\\", "/", ""):
+        raise ValueError("route path must not be a drive root (use `route --default` instead)")
     return expanded
 
 

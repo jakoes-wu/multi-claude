@@ -542,7 +542,9 @@ macOS 的查询命令固定为 `security find-generic-password -a <keychain_acco
 - **Linux 上 supervisor 的服务安装形态**：已关闭（2026-09-30）。从 Linux 构建提取源码核实为 systemd user unit（依据 14），占用检查第 5 条已覆盖。
 - **代理实测**：已关闭（2026-09-30）。Linux 测试机上 npm 版 Claude Code 2.1.286、临时 HOME、假 API key（不登录），用只记录 CONNECT 目标的本地代理跑 `claude-<名称> -p`：端口代理时全部连接经过代理（api.anthropic.com、github.com、http-intake.logs.us5.datadoghq.com）；`off` 且父环境设了代理时代理收到 0 个连接；`inherit` 对照组与端口代理相同。
 
-## 11. 二期：Windows 支持（不在本期编码范围）
+## 11. 二期：Windows 支持
+
+> 2026-10-29 注记：Windows 支持按独立方案 `docs/feature/feature-windows-support.md` 实施（凭据后端已从 Claude Code 2.1.306 程序核实，见该方案 §3）。本节保留为二期的原始设想。
 
 沿用 multi-codex §11 的框架（cmd 启动命令、junction、`install.ps1`）。Claude 特有的两点：
 

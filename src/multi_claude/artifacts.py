@@ -10,7 +10,6 @@ assistant 记录，结果写一行带 `tool_result` 块的 user 记录，发布�
 这段字节的 SHA-256），查询时据此把副本里交接前的记录归回来源账号（§5.1.3）。
 """
 
-import fcntl
 import hashlib
 import json
 import os
@@ -244,13 +243,13 @@ def record_handoff(handoff: "sessions.Plan", source_account_dir: str, target_acc
     data = (json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
     path = log_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
+    fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
     try:
         # 阻塞等待：两个 handoff 同时追加时排队，不交错。锁的是本文件，不是工具的写锁（handoff 不拿写锁）
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        platform.lock_fd(fd, blocking=True)
         # 只写描述符读不了末字节，所以上面用 O_RDWR 打开
         size = os.fstat(fd).st_size
-        if size and os.pread(fd, 1, size - 1) != b"\n":
+        if size and platform.read_at(fd, 1, size - 1) != b"\n":
             data = b"\n" + data
         view = memoryview(data)
         while view:
@@ -258,7 +257,7 @@ def record_handoff(handoff: "sessions.Plan", source_account_dir: str, target_acc
             view = view[written:]
         os.fsync(fd)
     finally:
-        # 关闭即释放 flock
+        # 关闭即释放锁（flock 与 msvcrt 字节锁都如此）
         os.close(fd)
 
 

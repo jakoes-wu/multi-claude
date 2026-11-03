@@ -7,6 +7,13 @@ if sys.argv[1:2] == ["statusline-hook"]:
     from .hook import main as hook_main
     sys.exit(hook_main(sys.argv[2:]))
 
+from . import platform  # noqa: E402
+
+# 闸门放在导入 cli 之前：不支持的平台上 cli 依赖的模块可能根本加载不了，要先给出一句能看懂的报错
+if not platform.is_supported():
+    sys.stderr.write("multi-claude: unsupported platform {}\n".format(sys.platform))
+    sys.exit(1)
+
 from .cli import main  # noqa: E402
 
 sys.exit(main())

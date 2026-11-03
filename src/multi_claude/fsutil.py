@@ -11,6 +11,8 @@ import stat
 import tempfile
 from typing import Callable, Dict, List, Optional, Tuple
 
+from . import platform
+
 # entry_kind() 的返回值
 KIND_MISSING = "missing"
 KIND_LINK = "link"
@@ -29,8 +31,10 @@ def is_under(path: str, root: str) -> bool:
     """path 等于 root 或位于 root 之下。
 
     必须按路径段比较：直接用 startswith(root) 会把 `~/.claude-shared`
-    误判为位于 `~/.claude` 之下。
+    误判为位于 `~/.claude` 之下。Windows 上路径不分大小写，先统一成小写与反斜杠再比。
     """
+    if platform.IS_WINDOWS:
+        path, root = os.path.normcase(path), os.path.normcase(root)
     root = root.rstrip(os.sep) or os.sep
     if path == root:
         return True
@@ -39,12 +43,15 @@ def is_under(path: str, root: str) -> bool:
 
 
 def entry_kind(path: str) -> str:
-    """按 lstat 判断目录项类型，不跟随软链；断开的软链返回 KIND_LINK。"""
+    """按 lstat 判断目录项类型，不跟随软链；断开的软链返回 KIND_LINK。Windows 的 junction 也算 KIND_LINK。"""
     try:
         st = os.lstat(path)
     except FileNotFoundError:
         return KIND_MISSING
     if stat.S_ISLNK(st.st_mode):
+        return KIND_LINK
+    # lstat 把 junction 报成普通目录，必须在 S_ISDIR 之前认出来，否则删除、复制都会深入它指向的目录
+    if platform.is_junction(path):
         return KIND_LINK
     if stat.S_ISDIR(st.st_mode):
         return KIND_DIR
@@ -75,8 +82,11 @@ def atomic_write(path: str, content: str, mode: int = 0o644) -> None:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        os.chmod(tmp_path, mode)
-        os.replace(tmp_path, path)
+        if not platform.IS_WINDOWS:
+            # Windows 没有这套权限位，chmod 只会改只读标记
+            os.chmod(tmp_path, mode)
+        # Windows 上目标正被别的程序（杀毒、索引、Claude）短暂打开时替换会失败，退避重试几次
+        platform.retry_on_sharing_violation(os.replace, tmp_path, path)
     except BaseException:
         try:
             os.unlink(tmp_path)
@@ -120,6 +130,9 @@ def remove_path(path: str) -> None:
     if kind == KIND_DIR:
         _grant_owner_access(path)
         shutil.rmtree(path)
+    elif kind == KIND_LINK:
+        # Windows 的 junction 与目录符号链接要用 rmdir 删；只删链接本身
+        platform.remove_link(path)
     else:
         os.unlink(path)
 
@@ -139,6 +152,16 @@ def _grant_owner_access(root: str) -> None:
             full = os.path.join(dirpath, name)
             if entry_kind(full) == KIND_DIR:
                 _add_owner_rwx(full)
+        prune_junctions(dirpath, dirnames)
+
+
+def prune_junctions(dirpath: str, dirnames: List[str]) -> None:
+    """os.walk 的 followlinks=False 认不出 junction，会进入它指向的目录；Windows 上从待遍历列表里去掉。
+
+    只在本轮循环体处理完 dirnames 之后调用：junction 本身仍要作为链接记进清单或复制。
+    """
+    if platform.IS_WINDOWS:
+        dirnames[:] = [name for name in dirnames if not platform.is_junction(os.path.join(dirpath, name))]
 
 
 def _add_owner_rwx(path: str) -> None:
@@ -169,13 +192,14 @@ def build_manifest(root: str) -> Tuple[Dict[str, ManifestEntry], List[str]]:
             rel = name if rel_dir == "." else os.path.join(rel_dir, name)
             kind = entry_kind(full)
             if kind == KIND_LINK:
-                manifest[rel] = (KIND_LINK, 0, os.readlink(full))
+                manifest[rel] = (KIND_LINK, 0, platform.read_link(full))
             elif kind == KIND_DIR:
                 manifest[rel] = (KIND_DIR, 0, "")
             elif kind == KIND_FILE:
                 manifest[rel] = (KIND_FILE, os.lstat(full).st_size, _sha256(full))
             elif kind == KIND_SPECIAL:
                 skipped.append(rel)
+        prune_junctions(dirpath, dirnames)
     return manifest, skipped
 
 
@@ -212,7 +236,7 @@ def copy_tree(src: str, dst: str, on_progress: Optional[Callable[[str], None]] =
             target = os.path.join(target_dir, name)
             kind = entry_kind(full)
             if kind == KIND_LINK:
-                os.symlink(os.readlink(full), target)
+                platform.copy_link(full, target)
             elif kind == KIND_DIR:
                 os.mkdir(target)
                 dir_modes.append((full, target))
@@ -222,6 +246,7 @@ def copy_tree(src: str, dst: str, on_progress: Optional[Callable[[str], None]] =
                     on_progress(target)
             elif kind == KIND_SPECIAL:
                 skipped.append(os.path.relpath(full, src))
+        prune_junctions(dirpath, dirnames)
     for source_dir, target_dir in reversed(dir_modes):
         shutil.copystat(source_dir, target_dir, follow_symlinks=False)
     return skipped

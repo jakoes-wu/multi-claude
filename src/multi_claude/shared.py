@@ -111,6 +111,30 @@ def _points_to(link: str, shared_root: Optional[str], item: str) -> bool:
     return shared_root is not None and same_target(link, os.path.join(shared_root, item))
 
 
+def file_links_needed(actions: List[Action]) -> List[str]:
+    """动作里要新建或改指向的、指向文件的共享链接路径。Windows 上建它们需要开发者模式（方案 C4）。"""
+    paths = []
+    for action in actions:
+        if action.kind != "shared-link" or action.status not in (CREATE, UPDATE) or action.run is None:
+            continue
+        if action.reason.startswith("-> ") and not os.path.isdir(action.reason[3:]):
+            paths.append(action.path)
+    return paths
+
+
+def file_link_items(config: Config) -> List[str]:
+    """共享目录里是文件的共享条目：新账号会为它们建文件链接。"""
+    if not config.shared_dir:
+        return []
+    directory = expand(config.shared_dir)
+    return [item for item in config.shared_items if os.path.isfile(os.path.join(directory, item))]
+
+
+def file_link_message(what: str, items: List[str]) -> str:
+    return ("cannot create {} on Windows: {}; or exclude {} with `multi-claude set NAME --shared-exclude ITEM`; "
+            "nothing was changed".format(what, platform.LINK_PERMISSION_HINT, ", ".join(items)))
+
+
 def _create_link(source: str, link: str):
     def run() -> None:
         platform.create_link(source, link)
@@ -119,12 +143,13 @@ def _create_link(source: str, link: str):
 
 def _replace_link(source: str, link: str):
     def run() -> None:
-        os.unlink(link)
+        platform.remove_link(link)
         platform.create_link(source, link)
     return run
 
 
 def _unlink(link: str):
     def run() -> None:
-        os.unlink(link)
+        # Windows 的 junction 不能用 os.unlink 删
+        platform.remove_link(link)
     return run

@@ -22,7 +22,7 @@ import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
-from . import __version__, accounts, usage
+from . import __version__, accounts, platform, usage
 from .actions import error, info, warn
 from .config import Account, Config
 from .fsutil import KIND_DIR, KIND_FILE, KIND_LINK, KIND_MISSING, atomic_write, entry_kind
@@ -114,10 +114,12 @@ def _create_temp(parent: str):
     for _attempt in range(100):
         path = os.path.join(parent, ".multi-claude-export.{}.tar.gz".format(os.urandom(6).hex()))
         try:
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
         except FileExistsError:
             continue
-        os.fchmod(fd, 0o600)  # 不受 umask 影响：包里可能有密钥，只给本人读
+        # 不受 umask 影响：包里可能有密钥，只给本人读。Windows 没有 fchmod，权限由用户目录的 ACL 保证
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
         return path, fd
     raise OSError("cannot create a temporary file in {}".format(parent))
 
@@ -132,7 +134,7 @@ def _publish(tmp_path: str, out_path: str) -> None:
         # 不支持硬链接的文件系统（如 exFAT）：再检查一次后改名
         if os.path.lexists(out_path):
             raise OSError("{} appeared while exporting; nothing was written".format(out_path))
-        os.replace(tmp_path, out_path)
+        platform.retry_on_sharing_violation(os.replace, tmp_path, out_path)
         return
     os.unlink(tmp_path)
 
@@ -350,7 +352,9 @@ def _check_item_types(members: List[tarfile.TarInfo]) -> None:
 def _check_member(member: tarfile.TarInfo) -> None:
     name = member.name
     parts = name.split("/")
-    if name.startswith("/") or "\\" in name or "\x00" in name or any(part in ("", ".", "..") for part in parts):
+    # Windows 上成员名里的冒号会被解析成盘符（C:x）或 NTFS 备用数据流（a:b），一律拒绝；POSIX 上冒号是普通字符
+    if (name.startswith("/") or "\\" in name or "\x00" in name or (platform.IS_WINDOWS and ":" in name)
+            or any(part in ("", ".", "..") for part in parts)):
         raise BundleError("unsafe path in bundle: {!r}".format(name))
     if not (member.isfile() or member.isdir()):
         raise BundleError("unsupported entry in bundle (only files and directories): {!r}".format(name))
@@ -453,9 +457,9 @@ def _apply(plan: _Plan, directory: str, staging: str, state_path: str) -> None:
         target = os.path.join(directory, item)
         if action == "replace":
             backup = _backup_name(target, stamp)
-            os.rename(target, backup)
+            platform.retry_on_sharing_violation(os.rename, target, backup)
             info("backup: {}".format(backup))
-        os.replace(os.path.join(staging, ITEMS_DIR, item), target)
+        platform.retry_on_sharing_violation(os.replace, os.path.join(staging, ITEMS_DIR, item), target)
     if data is None:
         return
     warn("Claude sessions of this account that are running keep their own copy of {} and may overwrite "

@@ -19,7 +19,7 @@ import unicodedata
 from datetime import datetime, timezone
 from typing import Dict, List, NamedTuple, Optional, Tuple
 
-from . import history, statusline
+from . import history, platform, statusline
 from .fsutil import build_manifest, copy_tree, diff_manifests
 
 # Claude 2.1.286 的 `tx`：编码后的目录名超过这个长度就截断并接哈希。
@@ -145,7 +145,7 @@ def _same_extra(source: str, target: str) -> bool:
     has_source, has_target = os.path.isdir(source), os.path.lexists(target)
     if not has_source or not has_target:
         return has_source == has_target
-    if not os.path.isdir(target) or os.path.islink(target):
+    if not os.path.isdir(target) or platform.is_link(target):
         return False
     return not diff_manifests(build_manifest(source)[0], build_manifest(target)[0])
 
@@ -167,7 +167,7 @@ def execute(handoff: Plan, force: bool) -> List[str]:
         for path in (target_file, target_extra):
             if os.path.lexists(path):
                 backup = statusline._backup_path(path)
-                os.rename(path, backup)
+                platform.retry_on_sharing_violation(os.rename, path, backup)
                 backups.append(backup)
     os.makedirs(handoff.target_dir, exist_ok=True)
     source_extra = os.path.join(handoff.source_dir, session_id)
@@ -177,7 +177,7 @@ def execute(handoff: Plan, force: bool) -> List[str]:
         _remove_tree(staging)
         try:
             copy_tree(source_extra, staging)
-            os.rename(staging, target_extra)
+            platform.retry_on_sharing_violation(os.rename, staging, target_extra)
         except BaseException:
             _remove_tree(staging)
             raise
@@ -190,7 +190,7 @@ def execute(handoff: Plan, force: bool) -> List[str]:
             os.fsync(handle.fileno())
         # 会话里可能有提示词与代码，与 Claude 自己写的会话文件一样只给属主读写。
         os.chmod(tmp_path, 0o600)
-        os.replace(tmp_path, target_file)
+        platform.retry_on_sharing_violation(os.replace, tmp_path, target_file)
     except BaseException:
         try:
             os.unlink(tmp_path)

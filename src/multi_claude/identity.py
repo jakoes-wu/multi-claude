@@ -19,13 +19,13 @@ import hashlib
 import json
 import math
 import os
-import pwd
 import re
 import subprocess
 import sys
 import unicodedata
 from typing import NamedTuple, Optional, Tuple
 
+from . import platform
 from .config import IDENTITY_DEFAULT
 from .fsutil import atomic_write
 
@@ -62,6 +62,8 @@ def keychain_account() -> str:
     """与 Claude 的 ok() 相同：取 USER，缺失时取当前 uid 的用户名；不合规则时用 claude-code-user。"""
     user = os.environ.get("USER")
     if not user:
+        # pwd 只在 POSIX 上有；本函数只在 macOS 钥匙串路径上调用，放在这里导入，Windows 上包才能加载
+        import pwd
         try:
             user = pwd.getpwuid(os.getuid()).pw_name
         except KeyError:
@@ -89,7 +91,31 @@ def probe(identity: str, account_dir: str) -> str:
             return LOGIN_KEYCHAIN
     if os.path.isfile(credentials_file(account_dir)):
         return LOGIN_FILE
+    if platform.IS_WINDOWS and _windows_credman_enabled(identity, account_dir):
+        # 凭据管理器后端下没有凭据文件，本工具也不读凭据管理器：查不了，不能说成“未登录”（方案 §5.1 B7）
+        return LOGIN_UNKNOWN
     return keychain_state
+
+
+def _windows_credman_enabled(identity: str, account_dir: str) -> bool:
+    """Claude 在 Windows 上是否把凭据存进凭据管理器（方案 §3 W1）。
+
+    两个开关任一打开即是：环境变量 CLAUDE_CODE_FORCE_WINDOWS_CREDMAN，或该账号全局配置文件里
+    cachedGrowthBookFeatures.tengu_windows_credman。全局配置文件的位置与 accounts.settings_proxy_overrides 同一规则：
+    默认身份在家目录下，其它账号在账号目录里。
+    """
+    forced = os.environ.get("CLAUDE_CODE_FORCE_WINDOWS_CREDMAN", "").strip().lower()
+    if forced in ("1", "true", "yes", "on"):
+        return True
+    global_config = (os.path.join(os.path.expanduser("~"), ".claude.json") if identity == IDENTITY_DEFAULT
+                     else os.path.join(account_dir, ".claude.json"))
+    try:
+        with open(global_config, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return False
+    features = data.get("cachedGrowthBookFeatures") if isinstance(data, dict) else None
+    return isinstance(features, dict) and features.get("tengu_windows_credman") is True
 
 
 def _probe_keychain(service: str) -> str:

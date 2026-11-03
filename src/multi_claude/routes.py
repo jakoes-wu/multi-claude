@@ -4,13 +4,16 @@
 “祖先或本身”，转交给对应账号的 `claude-<名称>`；没有命中时用默认账号，未设默认账号就直接运行 claude。
 `resolve` 是同一算法的 Python 实现，供 `which` 使用；两者必须保持一致（测试会对拍）。
 规则目录写进脚本时只展开 `~`，物理路径在启动时用 `cd -P` 求得，所以规则目录事后变成软链也能正确匹配。
+
+Windows 上入口是 `claude-auto.cmd`，只转调隐藏子命令 `launch`（不带账号名），由它在运行时调用 resolve，
+所以两边天然一致（方案 feature-windows-support §5.1 D3）。
 """
 
 import os
 import shlex
 from typing import Optional, Tuple
 
-from . import launcher
+from . import launcher, platform
 from .config import Account, Config, RouteRule
 from .fsutil import KIND_FILE, KIND_MISSING, entry_kind, expand, read_text
 
@@ -18,12 +21,13 @@ ROUTER_NAME = "claude-auto"
 # 与账号启动命令的标记（`# managed-by: multi-claude account=`）不同前缀：launcher.managed_account
 # 不认它，apply 的孤儿清理就不会把它当成账号启动命令删掉；反之路由计划也只认这一行。
 ROUTER_MARKER = "# managed-by: multi-claude router"
+WIN_ROUTER_MARKER = "@rem managed-by: multi-claude router"
 # 与路由入口同名的账号：两者的文件都是 <bin_dir>/claude-auto，不能共存。
 RESERVED_ACCOUNT = "auto"
 
 
 def router_path(bin_dir: str) -> str:
-    return os.path.join(expand(bin_dir), ROUTER_NAME)
+    return os.path.join(expand(bin_dir), ROUTER_NAME + platform.launcher_suffix())
 
 
 def is_router(path: str) -> bool:
@@ -34,13 +38,19 @@ def is_router(path: str) -> bool:
     if content is None:
         return False
     lines = content.split("\n", 2)
-    return len(lines) >= 2 and lines[1] == ROUTER_MARKER
+    if len(lines) < 2:
+        return False
+    if platform.IS_WINDOWS:
+        return lines[1].rstrip("\r") == WIN_ROUTER_MARKER
+    return lines[1] == ROUTER_MARKER
 
 
 def normalize_path(raw: str, cwd: str) -> str:
     """命令行输入的规则目录：`~` 开头的保持写法，其余转成绝对路径；都去掉尾部 `/`。"""
     if raw == "~" or raw.startswith("~/"):
         return raw.rstrip("/") or "~"
+    if platform.IS_WINDOWS and raw.startswith("~\\"):
+        return raw.rstrip("\\/") or "~"
     return os.path.normpath(os.path.join(cwd, raw))
 
 
@@ -59,8 +69,13 @@ def resolve(config: Config, directory: str) -> Tuple[Optional[Account], Optional
         if not (os.path.isdir(target) and os.access(target, os.X_OK)):
             continue
         physical = os.path.realpath(target)
-        # 逐字对应脚本的 case "$here/" in "$r"/*：规则目录解析成 / 时只命中 / 本身，与 sh 一致。
-        if (here + "/").startswith(physical + "/") and len(physical) > best_length:
+        if platform.IS_WINDOWS:
+            # Windows 路径不分大小写、分隔符是 \\；结构与下面的 POSIX 写法相同（盘符根目录已被配置校验拒绝）
+            matched = (os.path.normcase(here) + "\\").startswith(os.path.normcase(physical) + "\\")
+        else:
+            # 逐字对应脚本的 case "$here/" in "$r"/*：规则目录解析成 / 时只命中 / 本身，与 sh 一致。
+            matched = (here + "/").startswith(physical + "/")
+        if matched and len(physical) > best_length:
             best_rule, best_length = rule, len(physical)
     if best_rule is not None:
         return config.find(best_rule.account), best_rule
@@ -76,6 +91,8 @@ def _target_launcher(config: Config, name: str) -> str:
 
 
 def render_router(config: Config) -> str:
+    if platform.IS_WINDOWS:
+        return render_router_windows()
     lines = [
         "#!/bin/sh",
         ROUTER_MARKER,
@@ -119,6 +136,17 @@ def render_router(config: Config) -> str:
         "",
     ])
     return "\n".join(lines)
+
+
+def render_router_windows() -> str:
+    """Windows 的 `claude-auto.cmd`：规则在运行时从配置读取，文件内容与规则无关。"""
+    return "\n".join([
+        "@echo off",
+        WIN_ROUTER_MARKER,
+        '"{}" -I "{}" launch -- %*'.format(*launcher.windows_command_paths()),
+        "exit /b %ERRORLEVEL%",
+        "",
+    ])
 
 
 def router_status(config: Config) -> Optional[str]:

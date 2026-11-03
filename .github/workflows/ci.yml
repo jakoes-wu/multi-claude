@@ -20,7 +20,15 @@ jobs:
             python: "3.10"
           - os: macos-latest
             python: "3.12"
+          - os: windows-latest
+            python: "3.8"
+          - os: windows-latest
+            python: "3.12"
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        # Git Bash on Windows runners, so the grep checks below run unchanged on every OS.
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -43,4 +51,11 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y shellcheck lsof
       - name: Test
+        if: runner.os != 'Windows'
         run: python -m unittest discover -s tests -t tests -v
+      - name: Test (Windows)
+        # The other suites drive the POSIX sh launchers, symlinks and permission bits;
+        # test_windows covers the Windows code paths (launch, junctions, locks, migration, completion).
+        if: runner.os == 'Windows'
+        run: python -m unittest -v test_windows
+        working-directory: tests

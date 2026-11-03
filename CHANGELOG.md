@@ -6,7 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Native Windows support (install with `pipx install multi-claude-cli`). Launchers are `claude-<name>.cmd`
+  and `claude-auto.cmd`; shared directories use junctions; `migrate-default` and `restore` work and refuse
+  while any Claude process is running; `completion powershell` is new. See the README's Windows section for
+  the differences. CI runs `tests/test_windows.py` on Windows; the rest of the suite runs on macOS and Linux.
+  Tested on a Windows 11 machine (Windows PowerShell 5.1, npm-installed Claude Code). Known: exiting Claude
+  from a launcher briefly flashes cmd's "Terminate batch job (Y/N)?", which closes by itself. Not tested on a
+  real machine: Claude Code logins kept in Windows Credential Manager, the Claude desktop app, and file
+  symbolic links without administrator rights or Developer Mode.
+
 ### Changed
+
+- `env` and `apply` reject `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `APPDATA` and `LOCALAPPDATA` as account
+  variables on every platform, as they already did `HOME`: on Windows they decide where Claude Code keeps its
+  data. A configuration that sets one of them now fails with the key named.
+- `completion` lists `powershell` among the shells in the bash, zsh and fish scripts.
 
 - README: links in `README.md` are full URLs so they work on the PyPI project page (CI now checks
   this), and a platform badge (macOS | Linux) was added.
