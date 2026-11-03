@@ -103,12 +103,12 @@
 | ---- | ---- | ---- | ---- |
 | 跨账号、跨目录的会话列表 | `sessions [NAME]`（别名 `conversations`）：只读列出各账号各目录的会话，加 `--cmd` 附续聊命令（v0.10.0 时默认就附），含未迁移的 `~/.claude` | `feature-session-list.md`、`feature-sessions-cmd-column.md` | v0.10.0（PR #41）；排版与 `--cmd` v0.11.0（PR #43）；`--cmd` 不再显示 SESSION ID 列：v0.11.1（PR #45） |
 | 跨账号查 artifact 的归属与源文件 | `artifacts [NAME]`：离线扫描各账号会话记录里的发布，列出标题、所属账号、发布时间、URL，`--path` 附本地源文件，`--cmd` 附续聊命令；`handoff` 写交接记录供归属判定 | `feature-artifact-list.md` | v0.12.0（PR #47）；`--online` 联网核对：未排期 |
+| 原生 Windows 支持 | pipx 安装；`.cmd` 启动命令与 `claude-auto`；目录联接共享；`migrate-default` / `restore`；状态栏包装、PowerShell 补全 | `feature-windows-support.md` | v0.15.0（PR #56） |
 
 ## 3. 待定（未排期）
 
 - `use NAME`（切换 `~/.claude` 指向的账号）：**不做**（用户 2026-10-03 决定）。直接运行 `claude` 时钥匙串登录（macOS）、`~/.claude.json` 与 default 账号启动命令的指向检查都不跟着 `~/.claude` 走，切换后会混用两个账号的状态；改用各账号的启动命令，或 `route --default NAME` 加 `claude-auto`。见 `feature-everyday-commands.md` §6、§10。
 
-- Windows 支持（见 `feature-account-manager.md` 二期）。
 - TUI 选择器、菜单栏：可以基于 `list --json` 由外部工具实现。
 - VS Code `processWrapper` 入口：配合 `claude-auto`，让从图形界面启动的 IDE 也能按项目选账号；需要先确认 VS Code 扩展的配置项。
 - 非凭据备份：导出 settings、skills、项目记忆。
