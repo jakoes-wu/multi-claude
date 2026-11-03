@@ -18,12 +18,16 @@ import time
 from datetime import datetime, timedelta
 from typing import Mapping, NamedTuple, Optional, Tuple
 
-from . import accounts, usage
+from . import accounts, platform, usage
 from .config import Account, Config, load_config
 from .fsutil import atomic_write
-from .hook import HOOK_COMMAND
+from .hook import HOOK_COMMAND, MSYS_EXCL_ENV, MSYS_ORIG_ENV, MSYS_UNSET
 
 EXECUTABLE = "multi-claude"
+# Windows 上 Claude 用 Git Bash 执行 statusLine。Git Bash 调用 Windows 程序时会把 / 开头的参数改写成
+# Windows 路径，原命令作为参数传给 multi-claude.exe 时可能被改坏，所以前缀里关掉改写；
+# 原值先记进 MULTI_CLAUDE_MSYS_ORIG，钩子起原命令前再还原（hook.original_command_env）。
+WINDOWS_PREFIX = '{}="${{{}-{}}}" {}=\'*\' '.format(MSYS_ORIG_ENV, MSYS_EXCL_ENV, MSYS_UNSET, MSYS_EXCL_ENV)
 # 同一账号的状态栏约 300 ms 刷新一次；数值没变时一分钟内只落盘一次。
 THROTTLE = timedelta(seconds=60)
 
@@ -50,26 +54,51 @@ class Result(NamedTuple):
 
 
 def wrap(executable: str, original: str) -> str:
-    """包装后的命令。两段都用 shlex.quote：/bin/sh 对单引号串不做任何展开，钩子收到的参数与原命令逐字节相同。"""
+    """包装后的命令。两段都用 shlex.quote：/bin/sh 对单引号串不做任何展开，钩子收到的参数与原命令逐字节相同。
+
+    Windows 上执行它的是 Git Bash，引号规则相同；程序路径改用正斜杠（Git Bash 认 C:/…），并加上 WINDOWS_PREFIX。
+    """
+    if platform.IS_WINDOWS:
+        return WINDOWS_PREFIX + "{} {} {}".format(
+            shlex.quote(executable.replace("\\", "/")), HOOK_COMMAND, shlex.quote(original))
     return "{} {} {}".format(shlex.quote(executable), HOOK_COMMAND, shlex.quote(original))
 
 
 def unwrap(command: str) -> Optional[Tuple[str, str]]:
     """若 command 是本工具包装过的命令，返回 (multi-claude 路径, 原命令)；否则返回 None。"""
+    if platform.IS_WINDOWS and command.startswith(WINDOWS_PREFIX):
+        command = command[len(WINDOWS_PREFIX):]
     try:
         parts = shlex.split(command)
     except ValueError:
         return None
-    if len(parts) == 3 and parts[1] == HOOK_COMMAND and os.path.basename(parts[0]) == EXECUTABLE:
+    if len(parts) == 3 and parts[1] == HOOK_COMMAND and _is_executable_name(os.path.basename(parts[0])):
         return parts[0], parts[2]
     return None
+
+
+def _is_executable_name(name: str) -> bool:
+    if not platform.IS_WINDOWS:
+        return name == EXECUTABLE
+    name = name.lower()
+    return (name[:-4] if name.endswith(".exe") else name) == EXECUTABLE
+
+
+def _same_executable(left: str, right: str) -> bool:
+    """包装里记的路径与当前路径是否同一个；Windows 上不分大小写，包装里写的是正斜杠。"""
+    if not platform.IS_WINDOWS:
+        return left == right
+    return os.path.normcase(left.replace("/", "\\")) == os.path.normcase(right.replace("/", "\\"))
 
 
 def install(path: str, executable: str, dry_run: bool = False) -> Result:
     """包装 path 中的 statusLine 命令；已包装且路径相同时不改动，路径变了则改用新路径。"""
     target, data, command = _load(path)
+    if platform.IS_WINDOWS and data["statusLine"].get("shell") == "powershell":
+        # 包装命令是 sh 语法，PowerShell 执行不了
+        raise StatuslineError("statusline wrapping supports the default Git Bash shell only")
     wrapped = unwrap(command)
-    if wrapped is not None and wrapped[0] == executable:
+    if wrapped is not None and _same_executable(wrapped[0], executable):
         return Result(UNCHANGED, target, None, command)
     original = wrapped[1] if wrapped is not None else command
     new_command = wrap(executable, original)

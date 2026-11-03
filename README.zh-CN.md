@@ -7,7 +7,7 @@
 [![PyPI](https://img.shields.io/pypi/v/multi-claude-cli)](https://pypi.org/project/multi-claude-cli/)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)
 
 在一台机器上同时使用多个 [Claude Code](https://code.claude.com/docs) 账号。每个账号有自己的登录、设置和历史记录，还可以有自己的代理，不用再反复退出、重新登录。
 
@@ -58,7 +58,7 @@ claude            -> 行为不变
 
 | | 必需 | 可选 |
 | ---- | ---- | ---- |
-| 操作系统 | macOS 或 Linux（WSL 按 Linux 算） | 无 |
+| 操作系统 | macOS、Linux（WSL 按 Linux 算）或 Windows | 无 |
 | 工具 | Python 3.8+（`python3`，只用标准库）；Claude Code（`claude`）；安装脚本需要 `curl` 或 `wget`，以及 `tar` | `pipx` 或 Homebrew：从 PyPI 或 tap 安装时用；`lsof`：`migrate-default` 和 `restore` 用它查找占用 `~/.claude` 的进程（Linux 上没有时改读 `/proc`）；VS Code 的 `code` 命令：`multi-claude code` 时用 |
 
 缺什么装什么：
@@ -74,7 +74,15 @@ sudo apt install -y python3 curl tar lsof
 curl -fsSL https://claude.ai/install.sh | bash    # 还没装 Claude Code 时
 ```
 
-暂不支持 Windows 原生运行，请用 WSL。Claude Code 的其它安装方式：https://code.claude.com/docs/en/setup
+Windows 上先从 https://www.python.org/downloads/windows/ 或微软商店安装 Python 3.8+，再在 PowerShell 中运行：
+
+```powershell
+irm https://claude.ai/install.ps1 | iex    # Claude Code，还没装的话
+python -m pip install --user pipx
+python -m pipx ensurepath                  # 然后新开一个终端
+```
+
+Claude Code 的其它安装方式：https://code.claude.com/docs/en/setup
 
 ## 安装
 
@@ -103,6 +111,32 @@ curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install
 **下载校验**：从 v0.4.0 起，每个 release 都附带 `multi-claude-<tag>.tar.gz` 和 `SHA256SUMS`。远程安装会下载这个包，先校验 SHA-256，不一致就停止安装。安装分支或更早的版本时没有校验，安装脚本会明确提示；设置 `MULTI_CLAUDE_REQUIRE_CHECKSUM=1` 可以拒绝这种安装。校验和与安装包放在同一个 release 里，只能发现下载过程中的损坏或篡改，不能防范 GitHub 账号本身被攻破。
 
 `./install.sh --help` 列出全部选项。
+
+### Windows
+
+Windows 支持是新加的。用 `pipx install multi-claude-cli` 安装；安装脚本只用于 macOS 和 Linux。上面的用法都一样，区别如下：
+
+- 启动命令是 `%USERPROFILE%\.local\bin` 里的 `claude-<名称>.cmd` 和 `claude-auto.cmd`（`pipx ensurepath` 会把这个目录加进
+  `PATH`），PowerShell 和 cmd 里都能直接运行。它们每次启动时从配置读取代理、环境变量和固定参数，所以改了这些不用再 `apply`。
+- 账号目录在 `%USERPROFILE%\.cc`，配置在 `%APPDATA%\multi-claude`。
+- 共享目录用目录联接（junction）链接，不需要特殊权限。共享单个文件（如 `CLAUDE.md`）要建文件符号链接，需要打开开发者模式
+  （设置 > 系统 > 开发者选项）或在管理员终端里运行；没有权限时 `add`、`apply` 会停下并说明原因。用 `--shared-exclude`
+  排除这个文件，其余内容照常共享。
+- 只要还有任何 Claude 进程在运行，`migrate-default` 就拒绝迁移：Windows 上看不到其它进程用的是哪个账号。先关闭所有 Claude
+  窗口、终端和 IDE。
+- `statusline` 需要安装 Git for Windows：Claude Code 用其中的 Git Bash 执行状态栏命令。`statusLine` 设置里写了
+  `"shell": "powershell"` 的无法包装。
+- 路径中含 `"`、`%` 或 `!` 时无法写进 `.cmd` 启动命令，`apply` 会把这个账号报为冲突。
+- cmd 按控制台代码页读取 `.cmd` 文件，所以启动命令里不写非 ASCII 字符。Python 或安装路径里有中文（如中文用户名）时，
+  启动命令写成 `%USERPROFILE%\...`（或 `%LOCALAPPDATA%`、`%APPDATA%`）开头，不行再用 8.3 短名；两种写法都不成立
+  （如路径不在这几个目录下、又没有短名）时，`apply` 报为冲突。
+- 退出 Claude（Ctrl+C 或 `/exit`）时，cmd 可能一闪而过“终止批处理操作吗(Y/N)?”：启动命令是批处理文件。提示会自己消失，
+  此时 Claude 已正常退出，不丢任何内容。
+- `multi-claude completion powershell | Add-Content $PROFILE` 为 PowerShell 加上 Tab 补全。不要用 `>>`：Windows
+  PowerShell 5.1 会按 UTF-16 追加，把已有的 profile 弄坏。profile 所在目录还不存在时，先运行
+  `New-Item -ItemType Directory -Force (Split-Path $PROFILE)`。
+
+持续集成在 Windows 上运行 Windows 专属测试（`tests/test_windows.py`）；其余测试只在 macOS 和 Linux 上运行。
 
 ## 快速开始
 
@@ -430,6 +464,7 @@ VS Code 里的 Claude Code 扩展只认 VS Code 启动时环境中的 `CLAUDE_CO
 multi-claude completion bash > ~/.local/share/bash-completion/completions/multi-claude
 multi-claude completion zsh > "${fpath[1]}/_multi-claude"   # 或 fpath 中任意目录
 multi-claude completion fish > ~/.config/fish/completions/multi-claude.fish
+multi-claude completion powershell | Add-Content $PROFILE         # Windows PowerShell
 ```
 
 ## 迁移 `~/.claude`
@@ -551,7 +586,7 @@ multi-claude remove main         # 注销账号
 | ---- | ---- |
 | 账号目录 | `~/.cc/<名称>` |
 | 启动命令 | `~/.local/bin/claude-<名称>` |
-| 配置文件 | `~/.config/multi-claude/config.json`（设置了 `XDG_CONFIG_HOME` 时以它为准） |
+| 配置文件 | `~/.config/multi-claude/config.json`（设置了 `XDG_CONFIG_HOME` 时以它为准）；Windows 上是 `%APPDATA%\multi-claude\config.json` |
 
 账号名可以包含字母、数字和 `._@+-`，必须以字母或数字开头，不区分大小写（`Work` 与 `work` 是同一个账号），可以直接用邮箱。根目录下以 `.` 开头的条目不会被当成账号。
 

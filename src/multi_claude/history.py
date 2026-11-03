@@ -13,6 +13,8 @@ import os
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from typing import Dict, Iterable, List, NamedTuple, Optional, Tuple
 
+from .fsutil import prune_junctions
+
 SYNTHETIC_MODEL = "<synthetic>"
 # 缺少模型名的回复仍计入，按这个名字归组，计数不丢
 UNKNOWN_MODEL = "unknown"
@@ -43,10 +45,12 @@ class Row(NamedTuple):
 def _session_files(account_dir: str) -> Iterable[str]:
     root = os.path.join(account_dir, "projects")
     # os.walk 默认忽略读不了的目录（onerror=None）；projects/ 不存在时什么也不产出，视为没有数据
-    for directory, _dirs, files in os.walk(root):
+    for directory, dirs, files in os.walk(root):
         for name in files:
             if name.endswith(".jsonl"):
                 yield os.path.join(directory, name)
+        # Windows 上 os.walk 会进入 junction，同一批会话可能被统计两遍
+        prune_junctions(directory, dirs)
 
 
 def _parse_time(value) -> Optional[datetime]:

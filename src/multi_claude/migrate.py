@@ -21,7 +21,7 @@ import sys
 import time
 from typing import List, Optional
 
-from . import accounts, launcher, platform
+from . import accounts, launcher, platform, shared
 from .actions import error, info, warn
 from .config import IDENTITY_DEFAULT, PROXY_INHERIT, Account, Config, load_config, normalize_proxy
 from .fsutil import (KIND_DIR, KIND_LINK, KIND_MISSING, atomic_write, build_manifest, copy_tree,
@@ -192,8 +192,8 @@ def _check_environment(source_path: str) -> int:
     config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
     if config_dir:
         if os.path.realpath(config_dir) == os.path.realpath(source_path):
-            error("CLAUDE_CONFIG_DIR in this shell points to {}; run `unset CLAUDE_CONFIG_DIR` "
-                  "and rerun".format(source_path), phase="precheck", path=source_path)
+            error("CLAUDE_CONFIG_DIR in this shell points to {}; run `{}` "
+                  "and rerun".format(source_path, _UNSET_CONFIG_DIR), phase="precheck", path=source_path)
             print("  pid={} command=multi-claude usage=config-dir path={}".format(os.getpid(), config_dir),
                   file=sys.stderr)
             return accounts.EXIT_BUSY
@@ -298,6 +298,16 @@ def _register(config: Config, config_exists: bool, name: str, proxy: Optional[st
     return accounts.converge(config, new, config_exists=config_exists, dry_run=dry_run)
 
 
+# 提示里让用户执行的命令：Windows 上按 PowerShell 写
+_UNSET_CONFIG_DIR = "Remove-Item Env:CLAUDE_CONFIG_DIR" if platform.IS_WINDOWS else "unset CLAUDE_CONFIG_DIR"
+
+
+def _without_env(name: str) -> str:
+    if platform.IS_WINDOWS:
+        return "$env:{}=$null; multi-claude ...".format(name)
+    return "env -u {} multi-claude ...".format(name)
+
+
 def _busy_check(source: str, command: str = "migrate-default") -> int:
     """占用检查第 0–5 条（方案 §5.1.7）：迁移期间不能有任何 Claude 进程。
 
@@ -313,8 +323,8 @@ def _busy_check(source: str, command: str = "migrate-default") -> int:
         print("  pid={} command=multi-claude usage=inside-claude-session path={}".format(os.getpid(), source),
               file=sys.stderr)
         print("  note: {} can also be inherited by screen, tmux or programs started by Claude; if you are "
-              "sure this is not a Claude session, rerun as `env -u {} multi-claude ...`".format(
-                  platform.CHILD_SESSION_ENV, platform.CHILD_SESSION_ENV), file=sys.stderr)
+              "sure this is not a Claude session, rerun as `{}`".format(
+                  platform.CHILD_SESSION_ENV, _without_env(platform.CHILD_SESSION_ENV)), file=sys.stderr)
         return accounts.EXIT_BUSY
     try:
         busy = platform.find_busy_processes(source)
@@ -325,8 +335,9 @@ def _busy_check(source: str, command: str = "migrate-default") -> int:
         return accounts.EXIT_ERROR
     for message in users.warnings:
         warn(message)
-    if users.unreadable:
+    if users.unreadable and not platform.IS_WINDOWS:
         # Linux 上通常是已退出或不可 dump 的进程；macOS 上还包括系统隐去环境的 Apple 自带程序。
+        # Windows 读不到任何进程的环境（每个进程都计入），已改为任何 Claude 进程都判占用，这条提示只是噪音。
         info("the environment of {} process(es) could not be read, so they were not checked for "
              "CLAUDE_CONFIG_DIR (for example, macOS hides it for Apple's own programs such as the "
              "system shells)".format(users.unreadable))
@@ -343,7 +354,7 @@ def _busy_check(source: str, command: str = "migrate-default") -> int:
     parent_config = [process.path for process in busy if process.pid == parent and process.usage == "config-dir"]
     if parent_config:
         print("  note: the shell running this command exports CLAUDE_CONFIG_DIR={}; run "
-              "`unset CLAUDE_CONFIG_DIR` first".format(parent_config[0]), file=sys.stderr)
+              "`{}` first".format(parent_config[0], _UNSET_CONFIG_DIR), file=sys.stderr)
     elif any(process.pid == parent for process in busy):
         print("  note: the shell running this command has its working directory inside the source; "
               "cd out of it first", file=sys.stderr)
@@ -352,6 +363,10 @@ def _busy_check(source: str, command: str = "migrate-default") -> int:
               "to stop background sessions run:".format(source), file=sys.stderr)
         for stop_command in users.stop_commands:
             print("    " + stop_command, file=sys.stderr)
+    if platform.IS_WINDOWS:
+        # Windows 读不到进程的环境，给不出逐账号的停止命令（platform.find_claude_users）
+        print("  if a background Claude session is running, stop it with: claude daemon stop --any",
+              file=sys.stderr)
     if any(process.usage == "daemon-service" for process in busy):
         print("  the background service is installed and launchd/systemd may restart it at any time; run "
               "`claude daemon uninstall` first and install it again after the {}".format(
@@ -484,6 +499,27 @@ def _advance(journal: dict) -> int:
         raise MigrationStop(accounts.EXIT_ERROR, "cannot determine the migration state automatically")
 
 
+def _file_links_after_move(config: Config, config_exists: bool, journal: dict) -> List[str]:
+    """登记账号时真正要新建的文件链接（只算不做）。
+
+    预检时目标目录还不存在，规划会把每个共享条目都当成“缺失、要建链接”；而搬完后目标里就是原
+    ~/.claude 的内容，那里已有的条目不会建链接。所以按搬迁前的源目录排除这些条目，
+    免得只因共享目录里有个文件、而默认账号自己已有同名文件，就要求开开发者模式。
+    """
+    new = _config_with_account(config, journal["name"], journal.get("proxy"))
+    actions = accounts.plan(config, new, config_exists=config_exists, assume_dirs=[journal["target"]])
+    target = os.path.normcase(os.path.abspath(journal["target"]))
+    items = []
+    for path in shared.file_links_needed(actions):
+        if os.path.normcase(os.path.dirname(os.path.abspath(path))) != target:
+            items.append(path)
+            continue
+        name = os.path.basename(path)
+        if not os.path.lexists(os.path.join(journal["source"], name)):
+            items.append(name)
+    return items
+
+
 def _step_move(journal: dict) -> None:
     """第 1～3 步：重新预检、占用检查、移动数据。只在 S 是真实目录、T 与 B 都不存在时调用。
 
@@ -500,6 +536,11 @@ def _step_move(journal: dict) -> None:
             # 还没移动任何数据，放弃这次迁移，不留事务记录挡住其它命令。
             _delete_journal()
             raise MigrationStop(code)
+    file_items = _file_links_after_move(config, config_exists, journal) if platform.IS_WINDOWS else []
+    if file_items and not platform.can_create_file_link():
+        # 登记账号时要建这些文件链接；数据还没动，在这里停下比搬完再失败好收拾（方案 C4）
+        _delete_journal()
+        raise MigrationStop(accounts.EXIT_ERROR, shared.file_link_message("the shared file links", file_items))
 
     source, target = journal["source"], journal["target"]
     _enter_step("move")
@@ -507,6 +548,10 @@ def _step_move(journal: dict) -> None:
         try:
             os.rename(source, target)
         except OSError as exc:
+            if platform.is_sharing_violation(exc):
+                # Windows 上有程序打开了 S 里的文件或以它为当前目录；数据还没动，与占用检查失败同样处理
+                _delete_journal()
+                raise MigrationStop(accounts.EXIT_BUSY, platform.in_use_message(source, exc))
             if exc.errno != errno.EXDEV:
                 raise
             # 跨设备无法 rename：先把模式写进记录再复制，中断后续跑才会按 copy 规则处理。
@@ -581,7 +626,13 @@ def _step_park(journal: dict, verified_this_run: bool) -> None:
             remove_path(journal["target"])
             _set_phase(journal, PHASE_PLANNED)
             return
-    os.rename(journal["source"], journal["backup"])
+    try:
+        os.rename(journal["source"], journal["backup"])
+    except PermissionError as exc:
+        if not platform.is_sharing_violation(exc):
+            raise
+        # S 仍完好、T 是校验过的副本：保留事务记录，关掉占用的程序后重跑即可接着做
+        raise MigrationStop(accounts.EXIT_BUSY, platform.in_use_message(journal["source"], exc))
     _test_hook("rename-backup")
     _set_phase(journal, PHASE_PARKED)
     _test_hook("journal-parked")
@@ -657,6 +708,9 @@ def _rollback(journal: dict) -> int:
     except Exception as exc:  # noqa: BLE001 —— 回滚失败必须保留事务记录并报告现场
         error("rollback failed: {}: {}".format(type(exc).__name__, exc), phase="rollback",
               path=journal["source"])
+        if platform.is_sharing_violation(exc):
+            print("  " + platform.in_use_message(getattr(exc, "filename", None) or journal["source"], exc),
+                  file=sys.stderr)
         _print_state(journal)
     return accounts.EXIT_ERROR
 

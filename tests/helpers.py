@@ -3,7 +3,8 @@
 每个用例都在独立的临时 HOME 下运行，绝不触碰真实的 ~/.claude、~/.cc、钥匙串或 ~/.local/bin。
 setUp 里的安全闸任一不满足就让用例失败（而不是跳过）：
 - 子进程 PATH 固定，第一个 `claude` 与第一个 `security` 必须是本用例的假脚本；
-- HOME、XDG_CONFIG_HOME 指向临时目录；
+- HOME、XDG_CONFIG_HOME 指向临时目录；Windows 上 expanduser 读的是 USERPROFILE，状态目录在 APPDATA 下，
+  这几个变量同样指向临时目录，并核对子进程里 `~` 确实展开到临时目录；
 - 子进程环境从空字典构造，不继承任何 CLAUDE_* 变量（在 Claude 会话里跑测试时，
   继承的 CLAUDE_CODE_CHILD_SESSION 会让每个迁移用例都被占用检查第 0 条拦下）。
 CLI 一律以子进程运行：迁移的中断测试需要真正的进程退出（os._exit），
@@ -22,6 +23,10 @@ from typing import Dict, List, Optional
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src")
+if SRC not in sys.path:
+    sys.path.insert(0, SRC)
+
+from multi_claude import platform  # noqa: E402
 
 FAKE_CLAUDE = """#!/bin/sh
 printf '%s\\n' "$@" > "$FAKE_CLAUDE_OUT.args"
@@ -72,7 +77,68 @@ fi
 exit "$rc"
 """
 
-SYSTEM_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+# Windows 上 .cmd 不能当 shebang 脚本直接运行：假程序改用 Python 写，同名 .cmd 转调。
+# 输出格式与上面的 sh 版逐字节相同（参数逐行；环境变量 k=v 逐行；没有参数时也写一个空行，同 printf）。
+FAKE_CLAUDE_PY = """import os, sys
+out = os.environ["FAKE_CLAUDE_OUT"]
+with open(out + ".args", "w", encoding="utf-8", newline="\\n") as handle:
+    handle.write("".join(arg + "\\n" for arg in sys.argv[1:]) or "\\n")
+with open(out + ".env", "w", encoding="utf-8", newline="\\n") as handle:
+    handle.write("".join("{}={}\\n".format(key, value) for key, value in os.environ.items()))
+sys.exit(int(os.environ.get("FAKE_CLAUDE_RC", "0")))
+"""
+
+FAKE_SECURITY_PY = """import os, re, sys
+args = sys.argv[1:]
+log = os.environ["FAKE_SECURITY_LOG"]
+secret = os.environ.get("FAKE_SECURITY_SECRET", "")
+def append(text):
+    with open(log, "a", encoding="utf-8", newline="\\n") as handle:
+        handle.write(text)
+def store(digits):
+    with open(secret, "wb") as handle:
+        handle.write(bytes.fromhex(digits))
+append("".join(arg + "\\n" for arg in args) or "\\n")
+if args[:1] == ["-i"]:
+    line = sys.stdin.readline().rstrip("\\n")
+    append("stdin: " + re.sub(r'-X "[0-9a-f]*"', "-X <hex>", line) + "\\n--\\n")
+    wrc = os.environ.get("FAKE_SECURITY_WRITE_RC", "0")
+    found = re.findall(r'-X "([0-9a-f]*)"', line)
+    if wrc == "0" and secret and found:
+        store(found[-1])
+    sys.exit(int(wrc))
+append("--\\n")
+if args[:1] == ["add-generic-password"]:
+    wrc = os.environ.get("FAKE_SECURITY_WRITE_RC", "0")
+    for prev, arg in zip([""] + args, args):
+        if prev == "-X" and wrc == "0" and secret:
+            store(arg)
+    sys.exit(int(wrc))
+rc = os.environ.get("FAKE_SECURITY_RC", "44")
+if rc == "0":
+    for arg in args:
+        if arg == "-w":
+            if secret:
+                with open(secret, "rb") as handle:
+                    sys.stdout.buffer.write(handle.read())
+            else:
+                sys.stdout.write("{}\\n")
+sys.exit(int(rc))
+"""
+
+WINDOWS = sys.platform == "win32"
+if WINDOWS:
+    _system_root = os.environ.get("SYSTEMROOT", r"C:\Windows")
+    SYSTEM_PATH = [os.path.join(_system_root, "System32"), _system_root]
+else:
+    SYSTEM_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+# 生成的启动命令在 Windows 上带 .cmd 扩展名
+LAUNCHER_SUFFIX = ".cmd" if WINDOWS else ""
+# Windows 上子进程输出按 UTF-8 解码（子进程环境里设了 PYTHONIOENCODING）；POSIX 维持原来的默认解码
+TEXT_KWARGS = {"encoding": "utf-8", "errors": "replace"} if WINDOWS else {}
+
+posix_only = unittest.skipIf(WINDOWS, "POSIX-only behaviour")
+windows_only = unittest.skipUnless(WINDOWS, "Windows-only behaviour")
 
 
 class Result(object):
@@ -96,11 +162,19 @@ class CliTestCase(unittest.TestCase):
         self.fakebin = os.path.join(self.tmp, "fb")
         os.makedirs(self.home)
         os.makedirs(self.fakebin)
-        for name, content in (("claude", FAKE_CLAUDE), ("security", FAKE_SECURITY)):
-            path = os.path.join(self.fakebin, name)
-            with open(path, "w") as handle:
-                handle.write(content)
-            os.chmod(path, 0o755)
+        if WINDOWS:
+            for name, content in (("claude", FAKE_CLAUDE_PY), ("security", FAKE_SECURITY_PY)):
+                script = os.path.join(self.fakebin, name + "-fake.py")
+                with open(script, "w", encoding="utf-8") as handle:
+                    handle.write(content)
+                with open(os.path.join(self.fakebin, name + ".cmd"), "w") as handle:
+                    handle.write('@"{}" "{}" %*\r\n@exit /b %errorlevel%\r\n'.format(sys.executable, script))
+        else:
+            for name, content in (("claude", FAKE_CLAUDE), ("security", FAKE_SECURITY)):
+                path = os.path.join(self.fakebin, name)
+                with open(path, "w") as handle:
+                    handle.write(content)
+                os.chmod(path, 0o755)
         self.fake_out = os.path.join(self.tmp, "claude-out")
         self.security_log = os.path.join(self.tmp, "security.log")
         self.state = os.path.join(self.home, ".config", "multi-claude")
@@ -115,6 +189,23 @@ class CliTestCase(unittest.TestCase):
             "MULTI_CLAUDE_TEST_MODE": "1",
             "LC_ALL": "C.UTF-8" if sys.platform.startswith("linux") else "en_US.UTF-8",
         }
+        if WINDOWS:
+            appdata = os.path.join(self.home, "AppData", "Roaming")
+            self.state = os.path.join(appdata, "multi-claude")
+            self.env.pop("LC_ALL")
+            self.env.update({
+                "USERPROFILE": self.home,
+                "APPDATA": appdata,
+                "LOCALAPPDATA": os.path.join(self.home, "AppData", "Local"),
+                "TEMP": self.tmp,
+                "TMP": self.tmp,
+                "USERNAME": "tester",
+                # 没有 SYSTEMROOT 时 Windows 上的 Python 子进程初始化随机数会失败
+                "SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows"),
+                "COMSPEC": os.environ.get("COMSPEC", r"C:\Windows\System32\cmd.exe"),
+                "PATHEXT": ".COM;.EXE;.BAT;.CMD",
+                "PYTHONIOENCODING": "utf-8",
+            })
         self.root = os.path.join(self.home, ".cc")
         self.bin = os.path.join(self.home, ".local", "bin")
         self.assert_safe_env(self.env)
@@ -123,17 +214,29 @@ class CliTestCase(unittest.TestCase):
         """安全闸：子进程只能找到假 claude 与假 security，HOME 在临时目录里，没有 CLAUDE_* 变量。"""
         for name in ("claude", "security"):
             found = shutil.which(name, path=env["PATH"])
-            self.assertEqual(found, os.path.join(self.fakebin, name),
+            expected = os.path.join(self.fakebin, name + (".cmd" if WINDOWS else ""))
+            self.assertEqual(os.path.normcase(found or ""), os.path.normcase(expected),
                              "the first {} on PATH must be the fake one".format(name))
-        for key in ("HOME", "XDG_CONFIG_HOME"):
+        for key in ("HOME", "XDG_CONFIG_HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"):
             if key in env:
                 self.assertTrue(env[key].startswith(self.tmp + os.sep), "{} must be inside the temp dir".format(key))
+        if WINDOWS:
+            # HOMEDRIVE / HOMEPATH 会被某些程序当作家目录；子进程里 ~ 必须展开到临时目录
+            self.assertNotIn("HOMEDRIVE", env)
+            self.assertNotIn("HOMEPATH", env)
+            home = subprocess.run([sys.executable, "-I", "-c", "import os; print(os.path.expanduser('~'))"],
+                                  env=env, stdout=subprocess.PIPE, universal_newlines=True, **TEXT_KWARGS)
+            self.assertEqual(os.path.normcase(home.stdout.strip()), os.path.normcase(self.home),
+                             "~ must expand to the temp home")
         leaked = [key for key in env if key.startswith("CLAUDE") or key.startswith("ANTHROPIC")]
         self.assertEqual(leaked, [], "Claude variables must not leak into the test environment")
 
     def _cleanup(self) -> None:
         def onerror(func, path, _exc):
             os.chmod(os.path.dirname(path), 0o755)
+            if WINDOWS:
+                # Windows 的 chmod 只管只读属性：删不掉多半是文件本身只读
+                os.chmod(path, stat.S_IWRITE)
             func(path)
         shutil.rmtree(self.tmp, onerror=onerror)
 
@@ -153,7 +256,7 @@ class CliTestCase(unittest.TestCase):
                 cwd: Optional[str] = None) -> Result:
         proc = subprocess.run([sys.executable, "-m", "multi_claude"] + list(args), env=self._merged(env),
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              universal_newlines=True, cwd=cwd or self.tmp, timeout=120)
+                              universal_newlines=True, cwd=cwd or self.tmp, timeout=120, **TEXT_KWARGS)
         return Result(proc)
 
     def ok(self, *args: str, **kwargs) -> Result:
@@ -166,14 +269,15 @@ class CliTestCase(unittest.TestCase):
         for suffix in (".args", ".env"):
             if os.path.exists(self.fake_out + suffix):
                 os.unlink(self.fake_out + suffix)
-        proc = subprocess.run([os.path.join(self.bin, "claude-" + name)] + list(args), env=self._merged(env),
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        proc = subprocess.run([os.path.join(self.bin, "claude-" + name + LAUNCHER_SUFFIX)] + list(args),
+                              env=self._merged(env), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              universal_newlines=True, **TEXT_KWARGS)
         received_args: List[str] = []
         received_env: Dict[str, str] = {}
         if os.path.exists(self.fake_out + ".args"):
-            with open(self.fake_out + ".args") as handle:
+            with open(self.fake_out + ".args", **TEXT_KWARGS) as handle:
                 received_args = handle.read().split("\n")[:-1]
-            with open(self.fake_out + ".env") as handle:
+            with open(self.fake_out + ".env", **TEXT_KWARGS) as handle:
                 for line in handle.read().splitlines():
                     if "=" in line:
                         key, value = line.split("=", 1)
@@ -212,7 +316,12 @@ class CliTestCase(unittest.TestCase):
                     if path in (os.path.join(self.state, "lock"), self.state, os.path.dirname(self.state)):
                         continue
                     st = os.lstat(path)
-                    if stat.S_ISLNK(st.st_mode):
+                    if platform.is_junction(path):
+                        # os.walk 会进入 junction：记成链接，并且不往里走
+                        result[path] = ("link", platform.read_link(path))
+                        if name in dirnames:
+                            dirnames.remove(name)
+                    elif stat.S_ISLNK(st.st_mode):
                         result[path] = ("link", os.readlink(path))
                     elif stat.S_ISREG(st.st_mode):
                         with open(path, "rb") as handle:
@@ -225,7 +334,8 @@ class CliTestCase(unittest.TestCase):
 
     def write(self, path: str, content: str = "x", mode: Optional[int] = None) -> str:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as handle:
+        # Windows 默认按 ANSI 代码页写，内容含非 ASCII 会抛 UnicodeEncodeError；POSIX 下 TEXT_KWARGS 为空，行为不变
+        with open(path, "w", **TEXT_KWARGS) as handle:
             handle.write(content)
         if mode is not None:
             os.chmod(path, mode)

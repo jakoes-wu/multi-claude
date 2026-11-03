@@ -7,7 +7,7 @@
 [![PyPI](https://img.shields.io/pypi/v/multi-claude-cli)](https://pypi.org/project/multi-claude-cli/)
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/jakoes-wu/multi-claude/blob/main/LICENSE)
-![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)
 
 Use several [Claude Code](https://code.claude.com/docs) accounts on one machine, at the same time. Each account keeps its own login, settings and history and, if you like, its own proxy. No more logging out and in again.
 
@@ -58,7 +58,7 @@ The launchers are plain shell scripts. They keep working even if you uninstall m
 
 | | Needed | Optional |
 | ---- | ---- | ---- |
-| Operating system | macOS or Linux (WSL counts as Linux) | — |
+| Operating system | macOS, Linux (WSL counts as Linux) or Windows | — |
 | Tools | Python 3.8+ (`python3`, standard library only); Claude Code (`claude`); `curl` or `wget`, and `tar`, for the installer | `pipx` or Homebrew, to install from PyPI or the tap; `lsof`, so that `migrate-default` and `restore` can find processes using `~/.claude` (Linux falls back to `/proc`); VS Code's `code` command, for `multi-claude code` |
 
 Install what is missing:
@@ -74,7 +74,16 @@ sudo apt install -y python3 curl tar lsof
 curl -fsSL https://claude.ai/install.sh | bash    # Claude Code, if you do not have it yet
 ```
 
-Windows itself is not supported yet; use WSL. Other ways to install Claude Code: https://code.claude.com/docs/en/setup
+On Windows, install Python 3.8+ from https://www.python.org/downloads/windows/ or the Microsoft Store, then in
+PowerShell:
+
+```powershell
+irm https://claude.ai/install.ps1 | iex    # Claude Code, if you do not have it yet
+python -m pip install --user pipx
+python -m pipx ensurepath                  # then open a new terminal
+```
+
+Other ways to install Claude Code: https://code.claude.com/docs/en/setup
 
 ## Installation
 
@@ -103,6 +112,38 @@ With Homebrew: `brew install jakoes-wu/tap/multi-claude` (upgrade with `brew upg
 **Verified downloads.** From v0.4.0 on, every release publishes `multi-claude-<tag>.tar.gz` and `SHA256SUMS`. The remote installer downloads that archive and checks its SHA-256 before installing anything; a mismatch stops the installation. Branches and older releases are installed unverified (the installer says so); set `MULTI_CLAUDE_REQUIRE_CHECKSUM=1` to refuse them. The checksum is published next to the archive, so it protects against a damaged or altered download, not against a compromised GitHub account.
 
 Run `./install.sh --help` for all options.
+
+### Windows
+
+Windows support is new. Install with `pipx install multi-claude-cli`; the installer script is for macOS and Linux
+only. Everything above works the same way, with these differences:
+
+- Launchers are `claude-<name>.cmd` and `claude-auto.cmd` in `%USERPROFILE%\.local\bin` (the directory
+  `pipx ensurepath` adds to `PATH`), so they run from PowerShell and cmd alike. They read the proxy, variables
+  and arguments from the configuration each time they start, so a change takes effect without `apply`.
+- Account directories are in `%USERPROFILE%\.cc` and the configuration in `%APPDATA%\multi-claude`.
+- Shared directories are linked with directory junctions, which need no special rights. Sharing a single file
+  (such as `CLAUDE.md`) needs a file symbolic link, which needs Developer Mode (Settings > System > For
+  developers) or an administrator terminal; without it, `add` and `apply` stop and say so. Exclude the file
+  with `--shared-exclude` to share the rest.
+- `migrate-default` refuses while any Claude process is running: Windows does not let it see which account
+  another process uses. Close every Claude window, terminal and IDE first.
+- `statusline` needs Git for Windows, whose Git Bash is what Claude Code uses to run the status line. A
+  `statusLine` setting with `"shell": "powershell"` cannot be wrapped.
+- Paths containing `"`, `%` or `!` cannot be written into a `.cmd` launcher; `apply` reports such an account as
+  a conflict.
+- cmd reads a `.cmd` file in the console code page, so a launcher never contains non-ASCII characters. When the
+  Python or package path has them (for example a Chinese user name), the launcher writes it as
+  `%USERPROFILE%\...` (or `%LOCALAPPDATA%`, `%APPDATA%`), or else as its 8.3 short name. A non-ASCII path
+  that cannot be written with a variable and has no short name is reported as a conflict.
+- When Claude exits (Ctrl+C or `/exit`), cmd may flash "Terminate batch job (Y/N)?" for a moment: the launcher is
+  a batch file. It closes by itself; Claude has already exited and nothing is lost.
+- `multi-claude completion powershell | Add-Content $PROFILE` adds tab completion to PowerShell. Do not use `>>`:
+  Windows PowerShell 5.1 writes it as UTF-16 and breaks an existing profile. If the profile's directory does not
+  exist yet, create it first with `New-Item -ItemType Directory -Force (Split-Path $PROFILE)`.
+
+Continuous integration runs the Windows-specific tests on Windows (`tests/test_windows.py`); the rest of the test
+suite runs on macOS and Linux only.
 
 ## Quick start
 
@@ -430,6 +471,7 @@ Notes:
 multi-claude completion bash > ~/.local/share/bash-completion/completions/multi-claude
 multi-claude completion zsh > "${fpath[1]}/_multi-claude"   # or any directory on your fpath
 multi-claude completion fish > ~/.config/fish/completions/multi-claude.fish
+multi-claude completion powershell | Add-Content $PROFILE         # Windows PowerShell
 ```
 
 ## Migrating `~/.claude`
@@ -551,7 +593,7 @@ Every write command accepts `--dry-run`, and prints only what changes; add `--ve
 | ---- | ---- |
 | Account directories | `~/.cc/<name>` |
 | Launchers | `~/.local/bin/claude-<name>` |
-| Configuration | `~/.config/multi-claude/config.json` (honours `XDG_CONFIG_HOME`) |
+| Configuration | `~/.config/multi-claude/config.json` (honours `XDG_CONFIG_HOME`); on Windows `%APPDATA%\multi-claude\config.json` |
 
 Account names may contain letters, digits and `._@+-`, must start with a letter or digit, and are case-insensitive (`Work` and `work` are the same account). An email address works as a name. Entries starting with `.` in the root directory are never treated as accounts.
 

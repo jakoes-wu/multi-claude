@@ -7,12 +7,18 @@
 `account_dir=` 那一行是 dir 身份账号的登录绑定依据（macOS 钥匙串服务名由它的 SHA-256 决定），
 收敛引擎据此判断“会不会改变登录绑定”，所以该行的格式（`account_dir=` + shlex 转义值）
 不能随意改动。
+
+Windows 上启动命令是 `claude-<名称>.cmd`（方案 feature-windows-support §5.1 D）：只记录名称、账号目录和
+Python 路径，运行时调用隐藏子命令 `launch`，由 Python 按配置组环境与参数。这样 cmd 里不用转义任何值。
 """
 
+import ntpath
 import os
 import shlex
-from typing import Dict, List, Optional
+import sys
+from typing import Dict, List, Optional, Sequence, Tuple
 
+from . import platform
 from .config import IDENTITY_DEFAULT, PROXY_INHERIT, PROXY_OFF, PROXY_VARS
 from .fsutil import KIND_FILE, entry_kind, read_text
 
@@ -20,6 +26,11 @@ MARKER_PREFIX = "# managed-by: multi-claude account="
 LAUNCHER_PREFIX = "claude-"
 LAUNCHER_MODE = 0o755
 ACCOUNT_DIR_PREFIX = "account_dir="
+# Windows .cmd 模板的两行标记：语义与 POSIX 的两行相同，只是注释写法换成 `@rem `
+WIN_MARKER_PREFIX = "@rem managed-by: multi-claude account="
+WIN_ACCOUNT_DIR_PREFIX = "@rem account_dir="
+# 这几个字符在 .cmd 里无法可靠转义（引号会断开路径，% 与 ! 会被当成变量展开），出现时拒绝生成
+CMD_UNSAFE_CHARS = ('"', "%", "!", "\n", "\r")
 
 _NO_PROXY_HOSTS = "localhost,127.0.0.1,::1"
 
@@ -37,7 +48,109 @@ OPTIONAL_VALUE_OPTIONS = frozenset(["-d", "--debug", "-r", "--resume", "-w", "--
 
 
 def launcher_path(bin_dir: str, name: str) -> str:
-    return os.path.join(bin_dir, LAUNCHER_PREFIX + name)
+    return os.path.join(bin_dir, LAUNCHER_PREFIX + name + platform.launcher_suffix())
+
+
+def entry_script() -> str:
+    """Windows 启动命令调用的入口脚本：包目录里的 _entry.py（见该文件说明为何不用 `-m`）。"""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_entry.py")
+
+
+def windows_command_paths() -> Tuple[str, str]:
+    """写进 .cmd 启动命令的 (Python 路径, 入口脚本路径)。"""
+    return _cmd_path(sys.executable), _cmd_path(entry_script())
+
+
+# 含非 ASCII 的路径优先改写成以这些变量开头：cmd 展开变量时用的是 Unicode 值，不经过代码页，
+# 中文用户名（C:\Users\张三）下 pipx 的默认目录因此也能写进 .cmd
+_CMD_PATH_VARS = ("LOCALAPPDATA", "APPDATA", "USERPROFILE")
+
+
+def _is_ascii(text: str) -> bool:
+    return all(ord(char) < 128 for char in text)
+
+
+def _cmd_path(path: str) -> str:
+    """cmd 按控制台代码页读 .cmd，含非 ASCII 字符的路径会读成乱码，只有这时才改写路径。
+
+    纯 ASCII 路径必须原样写入：短名（如 SITE-P~1）会让 _entry.py 看到的包目录与实际加载的长路径对不上，
+    也让启动命令难以辨认。非 ASCII 时先试 `%USERPROFILE%` 这类变量开头的写法（非 ASCII 只在用户名里时成立），
+    不成立再换 8.3 短名。中文代码页下中文目录名本身就是合法的 8.3 名，Windows 不为它生成短名，
+    所以中文用户名只能靠变量写法（2026-11-03 实机核实）。
+    """
+    if _is_ascii(path):
+        return path
+    variable = _env_var_form(path)
+    if variable is not None:
+        return variable
+    return platform.short_path(path)
+
+
+def _env_var_form(path: str) -> Optional[str]:
+    """path 位于某个 _CMD_PATH_VARS 目录下、且余下部分是纯 ASCII 时，返回 `%变量%` 加余下部分；否则 None。
+
+    取最长的匹配目录（LOCALAPPDATA 在 USERPROFILE 之下）。展开结果不会再被展开，Windows 路径也不能含 `"`，
+    所以变量值里的字符不影响 .cmd 的解析；唯一例外是 `!`：用户在注册表里打开了 cmd 的延迟展开时，展开后的 `!` 仍会被解析，
+    所以含 `!` 的变量值不用。启动时的变量值与生成时不同，启动命令就会找不到 Python，
+    此时 doctor 会报启动命令过期，apply 重新生成即可。
+    """
+    best = None
+    for name in _CMD_PATH_VARS:
+        value = os.environ.get(name, "").rstrip("\\/")
+        if not value or not ntpath.isabs(value) or "!" in value:
+            continue
+        prefix = ntpath.normcase(value) + "\\"
+        if not ntpath.normcase(path).startswith(prefix):
+            continue
+        # 按原始变量值的长度切：个别字符（如土耳其字母 İ）转小写后会变长，按 prefix 的长度切会多切掉字符
+        rest = path[len(value) + 1:]
+        if _is_ascii(rest) and (best is None or len(value) > best[0]):
+            best = (len(value), "%{}%\\{}".format(name, rest))
+    return best[1] if best else None
+
+
+def _without_var_prefix(value: str) -> str:
+    """去掉 _cmd_path 加上的 `%变量%` 开头，剩下的部分才需要按字符规则检查。"""
+    for name in _CMD_PATH_VARS:
+        token = "%{}%".format(name)
+        if value.startswith(token):
+            return value[len(token):]
+    return value
+
+
+def cmd_unsafe_reason(values: List[str], commands: Sequence[str] = ()) -> Optional[str]:
+    """values / commands 里有 .cmd 无法安全写入的字符时返回说明，否则返回 None。
+
+    commands 是 cmd 真正要执行的路径（Python 与入口脚本）：cmd 按控制台代码页读 .cmd，非 ASCII 字符会被读错，
+    所以它们还必须是纯 ASCII（调用方已先取短名）。values 只出现在 `@rem` 注释行里，cmd 不解析，不限非 ASCII。
+    """
+    commands = [_without_var_prefix(value) for value in commands]
+    for value in list(values) + commands:
+        for char in CMD_UNSAFE_CHARS:
+            if char in value:
+                return "path {!r} contains {!r}, which cannot be written safely into a .cmd launcher".format(
+                    value, char)
+    for value in commands:
+        if any(ord(char) > 127 for char in value):
+            return ("path {!r} has non-ASCII characters and no 8.3 short name, so cmd.exe cannot run it from a "
+                    ".cmd launcher; reinstall multi-claude with pipx under a path without them".format(value))
+    return None
+
+
+def render_windows(name: str, account_dir: str, python: str, entry: str) -> str:
+    """生成 Windows 的 `claude-<名称>.cmd`。
+
+    必须用 `-I` 运行脚本而不是 `-m`：`-m` 会把当前目录放进模块搜索路径，用户在含 json.py 之类文件的项目里
+    启动时，这些文件会顶替标准库被执行。python / entry 取自 windows_command_paths，调用前须用 cmd_unsafe_reason 检查。
+    """
+    return "\n".join([
+        "@echo off",
+        WIN_MARKER_PREFIX + name,
+        WIN_ACCOUNT_DIR_PREFIX + account_dir,
+        '"{}" -I "{}" launch {} -- %*'.format(python, entry, name),
+        "exit /b %ERRORLEVEL%",
+        "",
+    ])
 
 
 def expand_value(value: str) -> str:
@@ -149,8 +262,13 @@ def variadic_warning(args: List[str]) -> Optional[str]:
 
 
 def rendered_account_dir(content: str) -> Optional[str]:
-    """从启动命令内容里取出 `account_dir=` 行的值（已去掉 shlex 转义）；取不到时返回 None。"""
+    """从启动命令内容里取出 `account_dir=` 行的值（已去掉 shlex 转义）；取不到时返回 None。
+
+    Windows 的 .cmd 模板里该行是 `@rem account_dir=<目录>`，值原样写入、不转义。
+    """
     for line in content.split("\n"):
+        if platform.IS_WINDOWS and line.startswith(WIN_ACCOUNT_DIR_PREFIX):
+            return line[len(WIN_ACCOUNT_DIR_PREFIX):].rstrip("\r") or None
         if line.startswith(ACCOUNT_DIR_PREFIX):
             try:
                 parts = shlex.split(line[len(ACCOUNT_DIR_PREFIX):])
@@ -171,9 +289,13 @@ def managed_account(path: str) -> Optional[str]:
     if content is None:
         return None
     lines = content.split("\n", 2)
-    if len(lines) < 2 or not lines[1].startswith(MARKER_PREFIX):
+    if len(lines) < 2:
         return None
-    return lines[1][len(MARKER_PREFIX):].strip() or None
+    # Windows 标记只在 Windows 上认：POSIX 上的识别规则保持不变
+    for prefix in (MARKER_PREFIX, WIN_MARKER_PREFIX) if platform.IS_WINDOWS else (MARKER_PREFIX,):
+        if lines[1].startswith(prefix):
+            return lines[1][len(prefix):].strip() or None
+    return None
 
 
 def scan_managed(bin_dir: str) -> Dict[str, str]:

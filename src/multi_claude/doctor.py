@@ -12,7 +12,7 @@ import shutil
 import stat
 from typing import List, NamedTuple, Optional, Tuple
 
-from . import accounts, identity, launcher, migrate, routes, shellpath
+from . import accounts, identity, launcher, migrate, platform, routes, shellpath
 from .config import IDENTITY_DEFAULT, Account, Config, ConfigError, load_config
 from .fsutil import expand
 
@@ -98,10 +98,12 @@ def _load() -> Tuple[Optional[Config], Check]:
 
 
 def _check_claude_on_path() -> Check:
-    found = shutil.which("claude")
+    found = platform.which("claude")
     if found is None:
-        return Check("claude-on-path", LEVEL_ERROR, "claude", "`claude` is not on PATH; install Claude Code: curl -fsSL https://claude.ai/install.sh "
-                     "| bash (other ways: https://code.claude.com/docs/en/setup)")
+        install = ("irm https://claude.ai/install.ps1 | iex" if platform.IS_WINDOWS
+                   else "curl -fsSL https://claude.ai/install.sh | bash")
+        return Check("claude-on-path", LEVEL_ERROR, "claude", "`claude` is not on PATH; install Claude Code: {} "
+                     "(other ways: https://code.claude.com/docs/en/setup)".format(install))
     return Check("claude-on-path", LEVEL_OK, "claude", found)
 
 
@@ -121,14 +123,9 @@ def _check_auth_env() -> List[Check]:
     return checks
 
 
-def _path_entries() -> List[str]:
-    return [os.path.abspath(os.path.expanduser(entry))
-            for entry in os.environ.get("PATH", "").split(os.pathsep) if entry]
-
-
 def _check_bin_on_path(config: Config) -> Check:
     bin_dir = expand(config.bin_dir)
-    if bin_dir not in _path_entries():
+    if not shellpath.on_path(bin_dir, os.environ.get("PATH", "")):
         return Check("bin-on-path", LEVEL_WARN, bin_dir,
                      "the launcher directory is not on PATH; " + shellpath.path_hint(
                          bin_dir, os.environ.get("SHELL"), py_platform.system()))
@@ -168,9 +165,9 @@ def _check_account(config: Config, account: Account) -> List[Check]:
 
     for item in config.shared_items:
         path = os.path.join(directory, item)
-        if os.path.islink(path) and not os.path.exists(path):
+        if platform.is_link(path) and not os.path.exists(path):
             checks.append(Check("shared-link", LEVEL_WARN, name,
-                                "{} is a broken link to {}".format(path, os.readlink(path))))
+                                "{} is a broken link to {}".format(path, platform.read_link(path))))
 
     login = identity.probe(account.identity, directory)
     if login in (identity.LOGIN_NONE, identity.LOGIN_UNKNOWN):
@@ -189,7 +186,8 @@ def _check_account_dir(name: str, directory: str) -> List[Check]:
         return [Check("account-dir", LEVEL_ERROR, name, "{} does not exist".format(directory))]
     if not os.path.isdir(directory):
         return [Check("account-dir", LEVEL_ERROR, name, "{} is not a directory".format(directory))]
-    if mode & 0o077:
+    if mode & 0o077 and not platform.IS_WINDOWS:
+        # Windows 的 st_mode 只反映只读标记，访问控制靠 ACL，这项检查在那里没有意义
         # 目录里有会话记录，Linux 上还有 .credentials.json，组或其他用户不应能读写。
         return [Check("account-dir", LEVEL_WARN, name,
                       "{} has mode {:o}; run `chmod 700 '{}'`".format(directory, mode, directory))]

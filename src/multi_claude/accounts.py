@@ -53,6 +53,9 @@ def default_dir() -> str:
 
 
 def render_launcher(config: Config, account: Account) -> str:
+    if platform.IS_WINDOWS:
+        python, entry = launcher.windows_command_paths()
+        return launcher.render_windows(account.name, account_dir(config, account.name), python, entry)
     return launcher.render(account.name, account.identity, account_dir(config, account.name), default_dir(),
                            account.proxy, config.effective_env(account), config.effective_args(account))
 
@@ -169,6 +172,11 @@ def _plan_router(old: Config, new: Config) -> List[Action]:
         actions.append(Action(CONFLICT, "router", new_path, "claude-auto is the directory router; an account "
                                                              "named 'auto' cannot coexist with routes"))
 
+    if platform.IS_WINDOWS:
+        unsafe = launcher.cmd_unsafe_reason([], launcher.windows_command_paths())
+        if unsafe is not None:
+            actions.append(Action(CONFLICT, "router", new_path, unsafe))
+            return actions
     content = routes.render_router(new)
     kind = entry_kind(new_path)
     if kind == KIND_MISSING:
@@ -230,12 +238,18 @@ def _make_private_dir(directory: str) -> None:
     if not os.path.isdir(parent):
         os.makedirs(parent, mode=0o700)
     os.mkdir(directory, 0o700)
-    os.chmod(directory, 0o700)
+    # Windows 上 chmod 只能改只读属性，访问控制靠用户目录的 ACL
+    if not platform.IS_WINDOWS:
+        os.chmod(directory, 0o700)
 
 
 def _plan_launcher(bin_dir: str, config: Config, account: Account) -> List[Action]:
     name = account.name
     path = launcher.launcher_path(bin_dir, name)
+    if platform.IS_WINDOWS:
+        unsafe = launcher.cmd_unsafe_reason([account_dir(config, name)], launcher.windows_command_paths())
+        if unsafe is not None:
+            return [Action(CONFLICT, "launcher", path, unsafe)]
     content = render_launcher(config, account)
     kind = entry_kind(path)
     if kind == KIND_MISSING:
@@ -296,6 +310,12 @@ def execute(old: Config, new: Config, actions: List[Action], *, dry_run: bool, v
         return EXIT_CONFLICT
     if dry_run:
         return EXIT_OK
+    # Windows 上没有权限建文件链接时，在写配置之前就停下，免得配置已写、链接只建了一半（方案 C4）
+    file_links = shared.file_links_needed(actions) if platform.IS_WINDOWS else []
+    if file_links and not platform.can_create_file_link():
+        error(shared.file_link_message("the file links " + ", ".join(file_links),
+                                       sorted({os.path.basename(path) for path in file_links})), phase="shared-link")
+        return EXIT_ERROR
     config_action = actions[0]
     if config_action.changes:
         try:
