@@ -11,7 +11,7 @@
 
 在一台机器上同时使用多个 [Claude Code](https://code.claude.com/docs) 账号。每个账号有自己的登录、设置和历史记录，还可以有自己的代理，不用再反复退出、重新登录。
 
-它从不复制或导出你的登录信息，也不改你的 shell 配置文件。只有 `list` 会读取账号的访问令牌并联网，向 Anthropic 查询当前套餐（令牌过期时先续期）；`list --offline` 完全不做这些。
+它从不复制或导出你的登录信息，也不改你的 shell 配置文件。只有 `list` 会读取账号的访问令牌并联网，向 Anthropic 查询当前套餐（令牌过期时先续期）；`list --offline` 完全不做这些。`doctor --network` 也会联网，但只在你主动加这个选项时，且不带任何登录信息。
 
 ```sh
 claude-work        # 用工作账号运行 Claude Code
@@ -39,7 +39,7 @@ claude            -> 行为不变
 ## 功能
 
 - **登录信息只属于你**：从不复制或导出登录信息。只有一个命令会动它：`list` 取各账号的访问令牌（macOS 在钥匙串，Linux 在 `.credentials.json`），向 Anthropic 查询该账号的套餐；访问令牌过期时，按 Claude Code 自己的方式续期，并把新令牌存回原处。令牌只留在内存里，只发往 Anthropic（`api.anthropic.com`，续期时是 `platform.claude.com`），并且走该账号自己的代理。`list --no-refresh` 不写入，`list --offline` 什么都不读。其余命令只查询登录是否存在。`migrate-default` 和 `restore` 会整体搬动账号目录，Linux 上凭据文件随目录一起移动，内容不会被打开。
-- **只有 `list` 联网**：它的套餐查询（每个账号一次请求，令牌过期时多一次续期请求）是 multi-claude 唯一的网络连接，没有统计上报，也不检查更新；`list --offline` 完全不联网。只有安装脚本、pipx 或 Homebrew 会下载安装包。
+- **只有 `list` 与 `doctor --network` 联网**：`list` 的套餐查询（每个账号一次请求，令牌过期时多一次续期请求）和 `doctor --network` 的连通检查（每条代理线路向 `api.anthropic.com`、`platform.claude.com` 各发一次不带凭据的 `HEAD /`，失败时重试一次）是 multi-claude 仅有的网络连接，没有统计上报，也不检查更新；`list --offline` 完全不联网。只有安装脚本、pipx 或 Homebrew 会下载安装包。
 - **不改你的 shell**：需要修改 `PATH` 时，只打印要加的那一行，不会改 `~/.zshrc` 或 `~/.bashrc`。
 - **只改你要它改的**：它只写自己的配置与状态文件、启动命令、账号目录（包括 `code` 放在 `<root>/.apps` 里的 VS Code 数据）和共享软链。Claude Code 的设置文件只在两种情况下被修改：`statusline install`（你指定的文件，会先备份）和 `add --config-from`（新账号的 `settings.json`）。
 - **迁移默认账号**：把已有的 `~/.claude` 移进账号根目录，登录不失效，直接运行 `claude` 的行为与之前完全一致。
@@ -52,7 +52,7 @@ claude            -> 行为不变
 
 ## 前置条件
 
-**服务器**：不需要。multi-claude 只在你自己的电脑上运行；唯一的网络请求是 `list` 向 Anthropic 查询套餐和续期令牌。
+**服务器**：不需要。multi-claude 只在你自己的电脑上运行；仅有的网络请求是 `list` 向 Anthropic 查询套餐和续期令牌，以及 `doctor --network` 的连通检查，都发往 Anthropic。
 
 **你的电脑**：
 
@@ -470,6 +470,8 @@ VS Code 里的 Claude Code 扩展只认 VS Code 启动时环境中的 `CLAUDE_CO
 
 `multi-claude doctor` 只读检查：配置与未完成的迁移；`claude` 和启动命令目录是否在 `PATH` 中；每个启动命令是否最新、有没有被同名文件遮住；账号目录是否存在、权限是否为 `0700`；默认账号的软链；断开的共享软链；是否有登录；以及 `ANTHROPIC_API_KEY` 这类会覆盖账号登录的变量。每个问题都附修复命令。有错误时退出码为 1；`--json` 输出供脚本使用。
 
+`multi-claude doctor --network` 另外检查每个账号能否经它启动时用的代理（含其 `settings.json` 里 `env` 的设置）连上 `api.anthropic.com` 与 `platform.claude.com`。它分步建立连接，连不上时说明卡在哪一步：代理没开、代理连不出去、域名解析失败、加密连接被掐断、证书无法验证、超时，或 `NO_PROXY` 让账号绕过了代理。Claude Code 不支持的 SOCKS 代理和写错的代理地址直接报出，不去连接；https 代理不检查。每个地址每条代理线路发一次 `HEAD /`（失败时重试一次），不带登录信息或令牌；被 `NO_PROXY` 覆盖的地址直接连接检查。
+
 ```sh
 multi-claude completion bash > ~/.local/share/bash-completion/completions/multi-claude
 multi-claude completion zsh > "${fpath[1]}/_multi-claude"   # 或 fpath 中任意目录
@@ -573,7 +575,7 @@ multi-claude remove main         # 注销账号
 | `multi-claude list [--verbose \| --json \| --names] [--no-refresh] [--offline]` | 列出账号、启动命令、登录状态，以及向 Anthropic 查询到的套餐与付款渠道；`--json` 额外包含用量，供脚本使用；`--names` 只输出名称；`--no-refresh` 不续期过期的访问令牌（不写登录信息）；`--offline` 跳过套餐查询（不读令牌、不联网）；填过续费日时多一列 `RENEWS`（`--json` 中为 `renews` 键） |
 | `multi-claude usage [名称] [--json]` | 显示各账号最近一次已知的 5 小时 / 7 天用量 |
 | `multi-claude usage --history [名称] [--days N] [--by day\|model] [--json]` | 按天或按模型统计本机会话记录里的 token 用量（默认 7 天） |
-| `multi-claude doctor [--json] [--verbose]` | 检查配置、启动命令、账号目录、共享软链、登录与环境变量 |
+| `multi-claude doctor [--json] [--verbose] [--network]` | 检查配置、启动命令、账号目录、共享软链、登录与环境变量；`--network` 另查每个账号到 Anthropic 的连接 |
 | `multi-claude route 目录 名称`、`route 目录 --remove`、`route --default 名称`、`route --no-default` | 为 `claude-auto` 设置按目录选账号的规则 |
 | `multi-claude which [目录]` | 显示 `claude-auto` 在该目录（默认当前目录）会用哪个账号 |
 | `multi-claude rename 旧名 新名` | 给账号及其启动命令改名，目录与登录不变 |

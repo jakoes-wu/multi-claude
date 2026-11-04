@@ -217,6 +217,7 @@ _SUBCOMMAND_EXAMPLES = {
         ("multi-claude doctor", "check the setup and suggest fixes"),
         ("multi-claude doctor --verbose", "also list the checks that passed"),
         ("multi-claude doctor --json", "for scripts"),
+        ("multi-claude doctor --network", "also check that each account can reach Anthropic (uses the network)"),
     ],
     "route": [
         ("multi-claude route ~/work work", "claude-auto uses work under ~/work"),
@@ -397,6 +398,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor = sub.add_parser("doctor", description="check the accounts, launchers and environment (read-only)")
     p_doctor.add_argument("--json", action="store_true", help="print machine-readable JSON")
     p_doctor.add_argument("--verbose", action="store_true", help="also list the checks that passed")
+    p_doctor.add_argument("--network", action="store_true",
+                          help="also connect to api.anthropic.com and platform.claude.com through each account's "
+                               "proxy (sends no credentials)")
 
     p_route = sub.add_parser("route", description="choose an account by directory for claude-auto: route DIR NAME, "
                                            "route DIR --remove, route --default NAME, route --no-default")
@@ -655,7 +659,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(completion.render(args.shell, build_parser()), end="")
         return accounts.EXIT_OK
     if args.command == "doctor":
-        return cmd_doctor(args.json, args.verbose)
+        return cmd_doctor(args.json, args.verbose, args.network)
 
     try:
         notice = migrate.pending_journal_notice()
@@ -2508,9 +2512,9 @@ def cmd_statusline(action: str, path: str, dry_run: bool) -> int:
     return accounts.EXIT_OK
 
 
-def cmd_doctor(as_json: bool, verbose: bool) -> int:
+def cmd_doctor(as_json: bool, verbose: bool, network: bool = False) -> int:
     try:
-        checks = doctor.run_checks()
+        checks = doctor.run_checks(network)
     except OSError as exc:
         # 意外的读写错误也记成一条检查结果，保证 --json 在任何情况下都输出合法 JSON。
         checks = [doctor.Check("doctor", doctor.LEVEL_ERROR, "-", "{}: {}".format(type(exc).__name__, exc))]

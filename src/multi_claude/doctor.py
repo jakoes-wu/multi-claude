@@ -2,6 +2,8 @@
 
 所有检查都不修改任何东西、不读凭据：登录检查沿用 identity.probe 的存在性探测。
 每条非 ok 结果的 message 里给出修复命令，由用户自己执行。
+加 `--network` 时另由 netcheck.py 联网检查每个账号能否连上 api.anthropic.com 与 platform.claude.com
+（每个地址一次不带凭据的 HEAD /，不读凭据）；不加时不联网。
 配置文件或迁移记录损坏时不抛异常，而是记成对应检查项的 error，其余不依赖配置的检查照常执行，
 这样 `doctor --json` 在任何状态下都输出合法 JSON。
 """
@@ -29,7 +31,7 @@ class Check(NamedTuple):
     message: str
 
 
-def run_checks() -> List[Check]:
+def run_checks(network: bool = False) -> List[Check]:
     checks: List[Check] = []
     checks.append(_check_journal())
     config, config_check = _load()
@@ -42,6 +44,10 @@ def run_checks() -> List[Check]:
     for account in config.accounts.values():
         checks.extend(_check_account(config, account))
     checks.extend(_check_routes(config))
+    if network:
+        # 只在 --network 时 import：netcheck 反向 import 本模块的 Check，放在顶部会循环导入。
+        from . import netcheck
+        checks.extend(netcheck.run(config))
     return checks
 
 

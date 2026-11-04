@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `multi-claude doctor --network` checks, for every account, that `api.anthropic.com` and
+  `platform.claude.com` can be reached through the proxy the account starts with, and says where a
+  failed connection stopped (proxy not running, proxy cannot get through, DNS, TLS, certificate,
+  timeout, or `NO_PROXY` bypassing the proxy). It sends one `HEAD /` without credentials per address
+  and proxy (retried once on failure), and only when `--network` is given.
+
 ### Changed
 
 - README: the Windows section shows how to install pipx first.
