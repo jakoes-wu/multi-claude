@@ -115,8 +115,19 @@ Run `./install.sh --help` for all options.
 
 ### Windows
 
-Windows support is new. Install with `pipx install multi-claude-cli`; the installer script is for macOS and Linux
-only. Everything above works the same way, with these differences:
+Windows support is new. Install it with pipx; the installer script is for macOS and Linux only. If `pipx` is not
+installed yet, run these in cmd or PowerShell (with Python 3.8 or later; use `python` instead of `py` if you do not
+have the Python launcher):
+
+```
+py -m pip install --user pipx
+py -m pipx ensurepath
+py -m pipx install multi-claude-cli
+```
+
+Then open a new terminal so the `PATH` change takes effect, and check with `multi-claude --version`. With pipx
+already on `PATH`, `pipx install multi-claude-cli` is enough. Everything above works the same way, with these
+differences:
 
 - Launchers are `claude-<name>.cmd` and `claude-auto.cmd` in `%USERPROFILE%\.local\bin` (the directory
   `pipx ensurepath` adds to `PATH`), so they run from PowerShell and cmd alike. They read the proxy, variables
