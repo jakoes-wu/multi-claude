@@ -114,7 +114,17 @@ curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install
 
 ### Windows
 
-Windows 支持是新加的。用 `pipx install multi-claude-cli` 安装；安装脚本只用于 macOS 和 Linux。上面的用法都一样，区别如下：
+Windows 支持是新加的。用 pipx 安装；安装脚本只用于 macOS 和 Linux。还没装 pipx 时，在 cmd 或 PowerShell 里依次运行
+（需要 Python 3.8 或更高版本；没有 Python 启动器 `py` 时把 `py` 换成 `python`）：
+
+```
+py -m pip install --user pipx
+py -m pipx ensurepath
+py -m pipx install multi-claude-cli
+```
+
+然后新开一个终端让 `PATH` 生效，用 `multi-claude --version` 确认。pipx 已经在 `PATH` 里时，直接 `pipx install multi-claude-cli`
+即可。上面的用法都一样，区别如下：
 
 - 启动命令是 `%USERPROFILE%\.local\bin` 里的 `claude-<名称>.cmd` 和 `claude-auto.cmd`（`pipx ensurepath` 会把这个目录加进
   `PATH`），PowerShell 和 cmd 里都能直接运行。它们每次启动时从配置读取代理、环境变量和固定参数，所以改了这些不用再 `apply`。
