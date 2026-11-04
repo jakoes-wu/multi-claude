@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-03
+
 ### Added
 
 - `multi-claude doctor --network` checks, for every account, that `api.anthropic.com` and
@@ -394,7 +396,8 @@ First release (macOS and Linux).
   program (`.../@anthropic-ai/claude-code/bin/claude.exe`) and the Linux
   systemd user service of the background supervisor.
 
-[Unreleased]: https://github.com/jakoes-wu/multi-claude/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/jakoes-wu/multi-claude/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/jakoes-wu/multi-claude/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/jakoes-wu/multi-claude/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/jakoes-wu/multi-claude/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/jakoes-wu/multi-claude/compare/v0.12.1...v0.13.0
