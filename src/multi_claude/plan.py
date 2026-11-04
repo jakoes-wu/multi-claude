@@ -1,6 +1,7 @@
 """向服务端实时查询各账号的套餐与付款渠道，供 `list` 显示（方案 feature-live-plan）。
 
-本模块是整个工具里唯一联网、唯一使用访问令牌的地方，只有 `list` 调用它：
+本模块是 `list` 的联网代码，也是整个工具里唯一使用访问令牌的地方，只有 `list` 调用它。
+另一处联网是 netcheck.py（`doctor --network`），它不带任何凭据。本模块：
 
 - 每个账号用自己的访问令牌请求 `GET /api/oauth/profile`，与 Claude Code 自己查询套餐的接口相同。
   过期的访问令牌不会被发出去：先交给 refresh.py 用刷新令牌换新的并写回凭据（`--no-refresh` 时不做），

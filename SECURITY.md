@@ -33,6 +33,16 @@ steps to reproduce. You should receive a reply within a week.
   account's configured proxy; a failing proxy is never bypassed. Expired
   access tokens are not sent. `list --offline` and `list --names` read no
   token and make no request.
+- `multi-claude doctor --network` connects, only when that option is given,
+  to `https://api.anthropic.com/` and `https://platform.claude.com/` through
+  each account's proxy (from its launcher settings and the `env` of its
+  `settings.json`; addresses covered by `NO_PROXY` are reached directly) and
+  sends one `HEAD /` per address and proxy, plus one retry if it fails, with
+  no Claude credential, cookie or account data. A user name and password
+  written in the proxy URL go only to that proxy, in `Proxy-Authorization`. It reads no token; from
+  `settings.json` it reads only proxy, `NO_PROXY`, `NODE_EXTRA_CA_CERTS`,
+  `ANTHROPIC_BASE_URL` and provider-selection variables. Proxy URLs are
+  shown as host and port only.
 - One command prints conversation content: `multi-claude sessions` reads the
   start and the end of each session file (`projects/*/*.jsonl`) and prints
   each session's title, or the beginning of its first prompt when it has no

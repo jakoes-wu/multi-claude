@@ -33,7 +33,10 @@ RUN_SKIPPED = {
 }
 
 # E5 允许的非零退出码：示例 → (退出码, 原因)。只收沙箱环境造成的失败，退出码 2（参数被拒）一律不允许。
-ALLOWED_EXIT = {}
+ALLOWED_EXIT = {
+    "multi-claude doctor --network": (1, "test mode without MULTI_CLAUDE_TEST_NETCHECK_TARGETS sends nothing "
+                                         "and reports every target as an error"),
+}
 
 
 def subparsers():

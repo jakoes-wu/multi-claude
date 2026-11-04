@@ -11,7 +11,7 @@
 
 Use several [Claude Code](https://code.claude.com/docs) accounts on one machine, at the same time. Each account keeps its own login, settings and history and, if you like, its own proxy. No more logging out and in again.
 
-It never copies or exports your login and never edits your shell startup files. Only `list` reads an account's access token and goes online, to ask Anthropic for the current plan (renewing the token first if it has expired); `list --offline` skips all of that.
+It never copies or exports your login and never edits your shell startup files. Only `list` reads an account's access token and goes online, to ask Anthropic for the current plan (renewing the token first if it has expired); `list --offline` skips all of that. `doctor --network` also goes online, but only when you ask for it and without any login.
 
 ```sh
 claude-work        # Claude Code with your work account
@@ -39,7 +39,7 @@ The launchers are plain shell scripts. They keep working even if you uninstall m
 ## Features
 
 - **Your login stays yours** — logins are never copied or exported. One command touches them: `list` takes each account's access token (from the keychain, or `.credentials.json` on Linux) to ask Anthropic which plan the account is on, and when that token has expired it renews it the way Claude Code does and saves the new one in the same place. Tokens stay in memory and go only to Anthropic (`api.anthropic.com`, and `platform.claude.com` for a renewal), through that account's proxy. `list --no-refresh` never writes, `list --offline` reads nothing. Every other command only checks whether a login exists. `migrate-default` and `restore` move whole account directories, and on Linux the credentials file moves with its directory without being opened.
-- **Only `list` goes online** — its plan lookup (one request per account, plus one to renew an expired token) is the only connection multi-claude makes: no telemetry, no usage reporting, no update checks. `list --offline` makes none. Only the installer, pipx or Homebrew download the package.
+- **Only `list` and `doctor --network` go online** — the plan lookup of `list` (one request per account, plus one to renew an expired token) and the connection check of `doctor --network` (one `HEAD /` without credentials to `api.anthropic.com` and `platform.claude.com` per proxy, repeated once if it fails) are the only connections multi-claude makes: no telemetry, no usage reporting, no update checks. `list --offline` makes none. Only the installer, pipx or Homebrew download the package.
 - **Leaves your shell alone** — when `PATH` needs a change, it prints the line to add instead of editing `~/.zshrc` or `~/.bashrc`.
 - **Changes only what you ask** — it writes its own configuration and state, the launchers, account directories (including the VS Code data that `code` keeps in `<root>/.apps`) and shared links. A Claude Code settings file is changed only by `statusline install` (the file you name, with a backup) and `add --config-from` (the new account's `settings.json`).
 - **Migrate the default account** — move your existing `~/.claude` into the account root without logging out. `claude` keeps working exactly as before.
@@ -52,7 +52,7 @@ The launchers are plain shell scripts. They keep working even if you uninstall m
 
 ## Prerequisites
 
-**Servers.** None. multi-claude runs only on your own computer; its only network requests are the plan lookups and token renewals of `list`, sent to Anthropic.
+**Servers.** None. multi-claude runs only on your own computer; its only network requests are the plan lookups and token renewals of `list` and the connection check of `doctor --network`, all sent to Anthropic.
 
 **Your computer.**
 
@@ -478,6 +478,8 @@ Notes:
 
 `multi-claude doctor` checks, without changing anything: the configuration and any unfinished migration, whether `claude` and the launcher directory are on `PATH`, whether each launcher is up to date and not hidden by another file of the same name, whether each account directory exists and is private (`0700`), the default account's link, broken shared links, whether a login exists, and variables such as `ANTHROPIC_API_KEY` that override the accounts' logins. Every problem comes with the command that fixes it. It exits with 1 when there is an error; `--json` prints the results for scripts.
 
+`multi-claude doctor --network` also checks that each account can reach `api.anthropic.com` and `platform.claude.com` through the proxy it starts with (including the `env` of its `settings.json`). It connects step by step and says where it stopped: the proxy is not running, the proxy cannot get through, a name does not resolve, the secure connection was cut, the certificate could not be verified, a timeout, or `NO_PROXY` sends the account around its proxy. SOCKS and malformed proxy URLs, which Claude Code cannot use, are reported without connecting; https proxies are not checked. It sends one `HEAD /` per address and proxy (a second one if the first fails), with no login or token; addresses covered by `NO_PROXY` are checked directly.
+
 ```sh
 multi-claude completion bash > ~/.local/share/bash-completion/completions/multi-claude
 multi-claude completion zsh > "${fpath[1]}/_multi-claude"   # or any directory on your fpath
@@ -581,7 +583,7 @@ Every command's `--help` ends with examples you can copy, covering its options, 
 | `multi-claude list [--verbose \| --json \| --names] [--no-refresh] [--offline]` | Show accounts, launchers, login state and the plan and billing channel looked up from Anthropic. `--json` adds usage and is meant for scripts; `--names` prints only the names; `--no-refresh` does not renew expired access tokens (never writes to a login); `--offline` skips the plan lookup (no token read, no network). A `RENEWS` column (and a `renews` key in `--json`) shows the renewal dates you recorded. |
 | `multi-claude usage [NAME] [--json]` | Show the last known 5-hour and 7-day usage of each account. |
 | `multi-claude usage --history [NAME] [--days N] [--by day\|model] [--json]` | Token usage per day or model, counted from the session files on this machine (default: 7 days). |
-| `multi-claude doctor [--json] [--verbose]` | Check the configuration, launchers, account directories, shared links, logins and environment. |
+| `multi-claude doctor [--json] [--verbose] [--network]` | Check the configuration, launchers, account directories, shared links, logins and environment; `--network` also checks each account's connection to Anthropic. |
 | `multi-claude route DIR NAME`, `route DIR --remove`, `route --default NAME`, `route --no-default` | Choose an account by directory for `claude-auto`. |
 | `multi-claude which [DIR]` | Show which account `claude-auto` would use in `DIR` (default: the current directory). |
 | `multi-claude rename OLD NEW` | Rename an account and its launcher. The directory and the login stay. |
