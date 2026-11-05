@@ -48,7 +48,9 @@ class InstallTest(CliTestCase):
         self.assertEqual(first.returncode, 0, first.stderr)
         second = self.install()
         self.assertEqual(second.returncode, 0, second.stderr)
-        self.assertEqual(second.stdout.count("unchanged"), 2, second.stdout)
+        # 只看程序目录和 wrapper 两行：补全那一步的输出随 SHELL 变化，不计入（方案 feature-auto-completion §7）
+        self.assertIn("unchanged: " + os.path.join(self.prefix, "share", "multi-claude"), second.stdout)
+        self.assertIn("unchanged: " + os.path.join(self.prefix, "bin", "multi-claude"), second.stdout)
         self.assertEqual(self.tool("--version").returncode, 0)
 
     def test_version_manager_shim_is_resolved(self):
@@ -157,6 +159,62 @@ class InstallTest(CliTestCase):
         self.assertEqual(env["CLAUDE_CONFIG_DIR"], os.path.join(self.root, "work"))
         again = self.install("--uninstall")
         self.assertIn("unchanged", again.stdout)
+
+    # 以下为方案 feature-auto-completion §8 第 15-19 条
+    def zshrc(self):
+        path = os.path.join(self.home, ".zshrc")
+        if not os.path.exists(path):
+            return ""
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_install_sets_up_completion(self):
+        result = self.install(env={"SHELL": "/bin/zsh"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("completion: installed", result.stdout)
+        text = self.zshrc()
+        self.assertEqual(text.count("# >>> multi-claude completion >>>"), 1)
+        self.assertIn("'{}'".format(os.path.join(self.prefix, "bin", "multi-claude")), text)
+        again = self.install(env={"SHELL": "/bin/zsh"})
+        self.assertIn("completion: unchanged", again.stdout)
+        self.assertEqual(self.zshrc().count("# >>> multi-claude completion >>>"), 1)
+
+    def test_no_completion_leaves_profiles_alone(self):
+        for env in ({"SHELL": "/bin/zsh"}, {"SHELL": "/bin/zsh", "MULTI_CLAUDE_NO_COMPLETION": "1"}):
+            args = () if "MULTI_CLAUDE_NO_COMPLETION" in env else ("--no-completion",)
+            with self.subTest(env=env):
+                result = self.install(*args, env=env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn("completion:", result.stdout)
+                self.assertFalse(os.path.exists(os.path.join(self.home, ".zshrc")))
+
+    def test_user_uninstall_is_respected(self):
+        self.assertEqual(self.install(env={"SHELL": "/bin/zsh"}).returncode, 0)
+        env = dict(self.env, SHELL="/bin/zsh")
+        proc = subprocess.run([os.path.join(self.prefix, "bin", "multi-claude"), "completion", "--uninstall"],
+                              env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True,
+                              timeout=120)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        again = self.install(env={"SHELL": "/bin/zsh"})
+        self.assertIn("completion: skipped-off", again.stdout)
+        self.assertNotIn("multi-claude completion >>>", self.zshrc())
+
+    def test_uninstall_removes_completion(self):
+        self.assertEqual(self.install(env={"SHELL": "/bin/zsh"}).returncode, 0)
+        result = self.install("--uninstall")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("multi-claude completion >>>", self.zshrc())
+        self.assertFalse(os.path.exists(os.path.join(self.state, "completion-off")))
+
+    def test_completion_failure_does_not_fail_install(self):
+        block = "# >>> multi-claude completion >>>\nx\n# <<< multi-claude completion <<<\n"
+        self.write(os.path.join(self.home, ".zshrc"), block + block)
+        config = self.write(os.path.join(self.tmp, "accounts.json"), json.dumps(
+            {"version": 1, "accounts": {"work": {"proxy": "7901"}}}))
+        result = self.install("--config", config, env={"SHELL": "/bin/zsh"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("note: could not set up tab completion", result.stdout)
+        self.assertTrue(os.path.exists(os.path.join(self.bin, "claude-work")))
 
     def test_help_and_bad_arguments(self):
         help_result = subprocess.run(["sh", INSTALL, "--help"], stdout=subprocess.PIPE, universal_newlines=True)

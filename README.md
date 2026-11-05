@@ -11,7 +11,7 @@
 
 Use several [Claude Code](https://code.claude.com/docs) accounts on one machine, at the same time. Each account keeps its own login, settings and history and, if you like, its own proxy. No more logging out and in again.
 
-It never copies or exports your login and never edits your shell startup files. Only `list` reads an account's access token and goes online, to ask Anthropic for the current plan (renewing the token first if it has expired); `list --offline` skips all of that. `doctor --network` and the optional [pre-launch network check](#pre-launch-network-check) also go online, but only when you ask for them and without any login.
+It never copies or exports your login and edits your shell startup files only to set up tab completion, inside a marked block, or for fish in a completion file of its own ([Diagnostics and completion](#diagnostics-and-completion)). Only `list` reads an account's access token and goes online, to ask Anthropic for the current plan (renewing the token first if it has expired); `list --offline` skips all of that. `doctor --network` and the optional [pre-launch network check](#pre-launch-network-check) also go online, but only when you ask for them and without any login.
 
 ```sh
 claude-work        # Claude Code with your work account
@@ -101,7 +101,7 @@ Or directly:
 curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install.sh | sh
 ```
 
-The tool goes to `~/.local/share/multi-claude` and the `multi-claude` command to `~/.local/bin`. Use `--prefix DIR` to install somewhere else. Make sure `~/.local/bin` is on your `PATH`; the installer only prints a hint and never edits your shell profile.
+The tool goes to `~/.local/share/multi-claude` and the `multi-claude` command to `~/.local/bin`. Use `--prefix DIR` to install somewhere else. Make sure `~/.local/bin` is on your `PATH`; the installer only prints a hint for that. It does set up tab completion: it adds a marked block to `~/.zshrc`, `~/.bashrc` (`~/.bash_profile` on macOS) or a fish completion file, which generates the completion each time a shell starts, so it stays current after upgrades. Pass `--no-completion` (or set `MULTI_CLAUDE_NO_COMPLETION=1`) to leave your shell profile alone; `./install.sh --uninstall` removes the block. pipx and Homebrew users run `multi-claude completion --install` once.
 
 The `multi-claude` command runs with the `python3` found on `PATH` at install time. If that is a version-manager shim (pyenv, asdf, mise), the installer writes the interpreter behind it instead: a shim adds tens of milliseconds to every start, and with the statusline hook installed that happens on every status-line redraw. Run the installer again after removing that Python version.
 
@@ -149,9 +149,10 @@ differences:
   that cannot be written with a variable and has no short name is reported as a conflict.
 - When Claude exits (Ctrl+C or `/exit`), cmd may flash "Terminate batch job (Y/N)?" for a moment: the launcher is
   a batch file. It closes by itself; Claude has already exited and nothing is lost.
-- `multi-claude completion powershell | Add-Content $PROFILE` adds tab completion to PowerShell. Do not use `>>`:
-  Windows PowerShell 5.1 writes it as UTF-16 and breaks an existing profile. If the profile's directory does not
-  exist yet, create it first with `New-Item -ItemType Directory -Force (Split-Path $PROFILE)`.
+- `multi-claude completion --install` adds tab completion to the profile of each installed PowerShell (5.1 and 7),
+  keeping the profile's encoding. A profile in UTF-16 (what `>>` writes in Windows PowerShell 5.1) is reported and
+  left unchanged; save it as UTF-8 first. When there is no profile yet and the execution policy does not allow
+  scripts, it is not created.
 
 Continuous integration runs the Windows-specific tests on Windows (`tests/test_windows.py`); the rest of the test
 suite runs on macOS and Linux only.
@@ -516,13 +517,16 @@ Notes:
 `multi-claude doctor --network` also checks that each account can reach `api.anthropic.com` and `platform.claude.com` through the proxy it starts with (including the `env` of its `settings.json`). It connects step by step and says where it stopped: the proxy is not running, the proxy cannot get through, a name does not resolve, the secure connection was cut, the certificate could not be verified, a timeout, or `NO_PROXY` sends the account around its proxy. SOCKS and malformed proxy URLs, which Claude Code cannot use, are reported without connecting; https proxies are not checked. It sends one `HEAD /` per address and proxy (a second one if the first fails), with no login or token; addresses covered by `NO_PROXY` are checked directly.
 
 ```sh
-multi-claude completion bash > ~/.local/share/bash-completion/completions/multi-claude
-multi-claude completion zsh > "${fpath[1]}/_multi-claude"   # or any directory on your fpath
-multi-claude completion fish > ~/.config/fish/completions/multi-claude.fish
-multi-claude completion powershell | Add-Content $PROFILE         # Windows PowerShell
+multi-claude completion --install          # the shell in $SHELL; PowerShell on Windows
+multi-claude completion --install bash     # or name it: bash, zsh, fish, powershell
+multi-claude completion --uninstall
 ```
 
-Completion covers subcommands, options, account names and the values of options and arguments (for example the `netcheck` levels, `on`/`off` after `--clash`, and the shared item names after `--shared-exclude`). Each command above saves a copy of the script, so run it again after upgrading (for PowerShell, remove the earlier block from `$PROFILE` first).
+Completion covers subcommands, options, account names and the values of options and arguments (for example the `netcheck` levels, `on`/`off` after `--clash`, and the shared item names after `--shared-exclude`).
+
+`--install` adds a block between `# >>> multi-claude completion >>>` and `# <<< multi-claude completion <<<` to `~/.zshrc` (`$ZDOTDIR/.zshrc`), `~/.bashrc` (`~/.bash_profile` on macOS) or each PowerShell profile, and for fish writes `~/.config/fish/completions/multi-claude.fish`. The block generates the completion each time a shell starts (about 0.08 seconds; fish does it the first time you complete `multi-claude`), so it stays current after any upgrade. A changed file is backed up next to it first (`.multi-claude-bak.<time>`); a symlinked profile keeps its link. `install.sh` runs it for you; after `--uninstall` it no longer does, until you run `--install` again. If the bin directory is not on `PATH` yet, add it before running `--install` by hand, or put the `PATH` line above the block.
+
+Completion scripts saved by earlier versions (`multi-claude completion zsh > ...`, a script pasted into a profile) can be deleted; in zsh and bash the block takes precedence over them, in PowerShell delete a pasted script before running `--install`. `multi-claude completion bash|zsh|fish|powershell` still prints the script.
 
 ## Migrating `~/.claude`
 
@@ -569,7 +573,7 @@ If a migration stops with an error and you want to abandon it: the error message
 
 ### How do I upgrade multi-claude?
 
-With pipx, run `pipx upgrade multi-claude-cli`; with Homebrew, `brew upgrade multi-claude`. Otherwise run the installer again: `curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install.sh | sh`, or `./install.sh` from an updated clone. It replaces only the tool; your configuration, accounts and launchers stay. When a release changes what launchers contain, `multi-claude doctor` reports them as stale and `multi-claude apply` rewrites them.
+With pipx, run `pipx upgrade multi-claude-cli`; with Homebrew, `brew upgrade multi-claude`. Tab completion set up with `multi-claude completion --install` follows the upgrade by itself. Otherwise run the installer again: `curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install.sh | sh`, or `./install.sh` from an updated clone. It replaces only the tool; your configuration, accounts and launchers stay. When a release changes what launchers contain, `multi-claude doctor` reports them as stale and `multi-claude apply` rewrites them.
 
 ### Which account does plain `claude` use?
 
@@ -635,7 +639,8 @@ Every command's `--help` ends with examples you can copy, covering its options, 
 | `multi-claude sessions [NAME] [--grep TEXT] [--limit N] [--cmd] [--json]` | List the sessions of every account and directory, newest first; `--cmd` adds the command that resumes each. Also `conversations`. |
 | `multi-claude artifacts [NAME] [--grep TEXT] [--limit N] [--path] [--cmd] [--json]` | List the artifacts published from the sessions of every account, newest first, with the account that owns each; `--path` adds the local source file, `--cmd` the command that resumes the session. |
 | `multi-claude statusline install\|uninstall FILE` | Wrap the statusLine command in a settings file so that `usage` gets fresh numbers, or restore it. |
-| `multi-claude completion bash\|zsh\|fish` | Print a shell completion script. |
+| `multi-claude completion --install\|--uninstall [SHELL]` | Add tab completion to your shell profile (kept current after upgrades), or remove it. |
+| `multi-claude completion bash\|zsh\|fish\|powershell` | Print a shell completion script. |
 
 Every write command accepts `--dry-run`, and prints only what changes; add `--verbose` to also list items that are already up to date. Run `multi-claude` without arguments for a short guide or your account list. `env`, `args`, `proxy` and `usage NAME` return 1 for an account that is not registered.
 

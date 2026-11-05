@@ -190,6 +190,9 @@ class HelpExamplesRunTest(CliTestCase):
             self.ok("export", "work", os.path.join(self.home, "work-settings.tar.gz"))
         elif name == "clash-api":
             self.write(os.path.join(self.home, "secret.txt"), "example-secret\n")
+        elif name == "completion":
+            # `completion --install` 不给 shell 时按 $SHELL 选；沙箱里的 HOME 是临时目录，改的是沙箱里的 .zshrc
+            self.env["SHELL"] = "/bin/zsh"
         elif name == "apply":
             shutil.copy(os.path.join(self.state, "config.json"), os.path.join(self.home, "accounts.json"))
         elif name == "add":

@@ -22,7 +22,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import List, NamedTuple, Optional, Tuple
 
 from . import (__version__, accounts, artifacts, bundle, completion, doctor, history, hook, identity, launcher, migrate,
-               plan, platform, refresh, restore, routes, sessions, shellpath, statusline, usage)
+               plan, platform, refresh, restore, routes, sessions, shellpath, shellrc, statusline, usage)
 from .actions import LOG_PREFIX, error, info, warn
 from .config import (DEFAULT_SHARED_DIR, DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, NET_CHECK_LEVELS,
                      NETCHECK_SKIP_ENV, Account, ClashApi, Config, ConfigError, RouteRule, normalize_clash_address,
@@ -284,9 +284,11 @@ _SUBCOMMAND_EXAMPLES = {
         ("multi-claude import ~/work-settings.tar.gz home --force", "back up and replace items that differ"),
     ],
     "completion": [
+        ("multi-claude completion --install", "set up completion for your shell; stays current after upgrades"),
+        ("multi-claude completion --uninstall", "remove it again (install.sh will not add it back)"),
         ("multi-claude completion bash > ~/.local/share/bash-completion/completions/multi-claude", "bash completion for your user"),
         ('multi-claude completion zsh > "${fpath[1]}/_multi-claude"', "zsh: any directory on your fpath"),
-        ("multi-claude completion fish > ~/.config/fish/completions/multi-claude.fish", "fish completion"),
+        ("multi-claude completion fish > ~/.config/fish/completions/multi-claude.fish", "fish: a saved copy, to redo after upgrades"),
         ("multi-claude completion powershell | Add-Content $PROFILE", "PowerShell: add to your profile"),
     ],
     "statusline": [
@@ -512,8 +514,18 @@ def build_parser() -> argparse.ArgumentParser:
                           help="back up and replace items and MCP servers that differ")
     _add_dry_run(p_import)
 
-    p_completion = sub.add_parser("completion", description="print a shell completion script")
-    p_completion.add_argument("shell", choices=completion.SHELLS)
+    p_completion = sub.add_parser("completion", description="print a shell completion script, or set up (--install) / "
+                                                            "remove (--uninstall) completion in your shell profile")
+    p_completion.add_argument("shell", nargs="?", choices=completion.SHELLS,
+                              help="default for --install / --uninstall: the shell in $SHELL (PowerShell on Windows)")
+    completion_mode = p_completion.add_mutually_exclusive_group()
+    completion_mode.add_argument("--install", action="store_true",
+                                 help="add a setup to your shell profile that generates the completion each time a "
+                                      "shell starts, so it stays current after upgrades")
+    completion_mode.add_argument("--uninstall", action="store_true",
+                                 help="remove that setup; install.sh will not add it back")
+    # install.sh 专用：安装时尊重用户的关闭标记、认不出 shell 不算错；卸载时清理全部候选文件
+    p_completion.add_argument("--auto", action="store_true", help=argparse.SUPPRESS)
 
     # 钩子 statusline-hook 不是子命令：它在 main 里先于 argparse 被拦下，不出现在帮助与补全中。
     p_statusline = sub.add_parser("statusline", description="record usage from Claude's status line: wrap (install) or "
@@ -716,8 +728,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # completion 与 doctor 在读取迁移记录之前分派：前者不依赖任何状态，后者要把损坏的配置或
     # 迁移记录报告成检查项，而不是被下面的统一异常处理打断（方案 v0.2 §5.1.6）。
     if args.command == "completion":
-        print(completion.render(args.shell, build_parser()), end="")
-        return accounts.EXIT_OK
+        return cmd_completion(args)
     if args.command == "doctor":
         return cmd_doctor(args.json, args.verbose, args.network)
 
@@ -822,6 +833,37 @@ def main(argv: Optional[List[str]] = None) -> int:
     except OSError as exc:
         error("{}: {}".format(type(exc).__name__, exc))
         return accounts.EXIT_ERROR
+
+
+def cmd_completion(args: argparse.Namespace) -> int:
+    """打印补全脚本，或把“现场生成补全”的设置写进 / 移出 shell 配置文件（方案 feature-auto-completion）。"""
+    if not (args.install or args.uninstall):
+        if args.shell is None:
+            print("completion: choose a shell ({}) or use --install".format(
+                ", ".join(completion.SHELLS)), file=sys.stderr)
+            return accounts.EXIT_USAGE
+        print(completion.render(args.shell, build_parser()), end="")
+        return accounts.EXIT_OK
+    try:
+        if args.install:
+            outcomes, code = shellrc.install(args.shell, args.auto, os.environ)
+        else:
+            outcomes, code = shellrc.uninstall(args.shell, args.auto, os.environ)
+    except shellrc.UsageError as exc:
+        print("completion: {}".format(exc), file=sys.stderr)
+        return accounts.EXIT_USAGE
+    for item in outcomes:
+        if item.error:
+            print("error: completion: {}: {}".format(item.path, item.error), file=sys.stderr)
+            continue
+        if item.status == "absent" and args.auto:
+            continue
+        if item.status:
+            suffix = " (open a new terminal)" if item.status in ("installed", "updated") else ""
+            print("completion: {} {}{}".format(item.status, item.path, suffix))
+        if item.note:
+            print("completion: note: {}".format(item.note))
+    return code
 
 
 def _blocked_by_migration(args: argparse.Namespace, notice: Optional[str]) -> bool:

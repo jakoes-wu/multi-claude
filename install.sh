@@ -16,11 +16,12 @@ REPO="${MULTI_CLAUDE_REPO:-jakoes-wu/multi-claude}"
 PREFIX="${HOME}/.local"
 CONFIG_FILE=""
 UNINSTALL=0
+NO_COMPLETION=0
 MARKER="# managed-by: multi-claude-installer"
 
 usage() {
   cat <<EOF
-Usage: install.sh [--prefix DIR] [--config FILE] [--uninstall] [-h|--help]
+Usage: install.sh [--prefix DIR] [--config FILE] [--no-completion] [--uninstall] [-h|--help]
 
 Install multi-claude, a manager for multiple Claude Code accounts.
 
@@ -32,8 +33,14 @@ Options:
                    files: DIR/share/multi-claude and DIR/bin/multi-claude
   --config FILE    after installing, run 'multi-claude apply -f FILE'
                    to create every account described in FILE
+  --no-completion  do not add tab completion to your shell profile; by
+                   default the installer runs 'multi-claude completion
+                   --install --auto', which adds a marked block to
+                   ~/.zshrc, ~/.bashrc (~/.bash_profile on macOS) or a
+                   fish completion file, and keeps it current on upgrades
   --uninstall      remove multi-claude itself; configuration, account
-                   directories and generated claude-<name> launchers are kept
+                   directories and generated claude-<name> launchers are kept;
+                   the tab completion block is removed
   -h, --help       show this help
 
 Environment:
@@ -47,6 +54,11 @@ Environment:
   MULTI_CLAUDE_SHA256   expected SHA-256 of MULTI_CLAUDE_TARBALL
   MULTI_CLAUDE_REQUIRE_CHECKSUM=1
                        refuse to install anything whose checksum cannot be verified
+  MULTI_CLAUDE_NO_COMPLETION=1
+                       same as --no-completion
+
+Tab completion is skipped when you ran 'multi-claude completion --uninstall'
+before; run 'multi-claude completion --install' to turn it back on.
 
 Releases from v0.4.0 on publish multi-claude-<tag>.tar.gz and SHA256SUMS; the
 installer downloads that archive and checks it before installing. Branches and
@@ -56,6 +68,7 @@ Examples:
   ./install.sh                                  # from a cloned repository
   ./install.sh --prefix /opt/tools              # custom location
   ./install.sh --config ~/my-accounts.json      # install, then create accounts
+  ./install.sh --no-completion                  # leave shell profiles alone
   ./install.sh --uninstall                      # remove the tool only
   curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | sh
   curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | sh -s -- --config accounts.json
@@ -71,10 +84,14 @@ while [ $# -gt 0 ]; do
     --prefix) [ $# -ge 2 ] || die "--prefix needs a value (see -h)"; PREFIX="$2"; shift 2 ;;
     --config) [ $# -ge 2 ] || die "--config needs a value (see -h)"; CONFIG_FILE="$2"; shift 2 ;;
     --uninstall) UNINSTALL=1; shift ;;
+    --no-completion) NO_COMPLETION=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) printf '[multi-claude-install] error: unknown option: %s (see -h)\n' "$1" >&2; exit 2 ;;
   esac
 done
+
+# 脚本开了 set -u，未设置的变量要带默认值再比较
+[ "${MULTI_CLAUDE_NO_COMPLETION:-}" = 1 ] && NO_COMPLETION=1
 
 case "$PREFIX" in
   *"'"*) die "--prefix must not contain a single quote" ;;
@@ -85,6 +102,11 @@ WRAPPER="${BIN_DIR}/multi-claude"
 
 if [ "$UNINSTALL" -eq 1 ]; then
   removed=0
+  # 先删补全块：wrapper 要靠程序目录才能运行，必须在删程序目录之前。只认本安装器写的 wrapper；
+  # 旧版本的 wrapper 不认识这个参数，stderr 丢掉，失败统一由 note 说明
+  if [ -f "$WRAPPER" ] && sed -n 2p "$WRAPPER" | grep -qF "$MARKER"; then
+    "$WRAPPER" completion --uninstall --auto 2>/dev/null || log "note: could not remove the tab completion setup"
+  fi
   if [ -d "$SHARE_DIR" ]; then rm -rf "$SHARE_DIR"; removed=1; fi
   if [ -d "${SHARE_DIR}.old" ]; then rm -rf "${SHARE_DIR}.old"; removed=1; fi
   for leftover in "${PREFIX}/share"/.multi-claude-stage.*; do
@@ -313,6 +335,13 @@ case ":${PATH}:" in
     fi
     ;;
 esac
+
+# 补全失败只记 note，不影响安装结果和后面的 --config。MULTI_CLAUDE_BIN 让块里记下 wrapper 的绝对路径，
+# 用户把 PATH 设置追加在块后面时补全照样生效
+if [ "$NO_COMPLETION" -eq 0 ]; then
+  MULTI_CLAUDE_BIN="$WRAPPER" "$WRAPPER" completion --install --auto \
+    || log "note: could not set up tab completion; run: multi-claude completion --install"
+fi
 
 if [ -n "$CONFIG_FILE" ]; then
   log "applying ${CONFIG_FILE}"
