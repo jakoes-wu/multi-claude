@@ -33,6 +33,7 @@
 | 网络自检 | `doctor --network`：按每个账号的代理分步连 `api.anthropic.com`、`platform.claude.com`，报告卡在哪一步 | `feature-network-check.md` | v0.16.0（PR #59） |
 | 启动前网络检查 | `netcheck NAME off\|basic\|strict`、Clash TUN / 全局两项检查、`clash-api ADDRESS\|auto\|off`；不通过时各启动入口退出 5 | `feature-launch-gate.md` | v0.17.0（PR #61） |
 | 补全参数取值 | 四种 shell 补全选项与参数的取值：`netcheck --clash*` 的 on/off、`usage --by` 的 day/model、`--shared-exclude/--shared-include` 的共享项名；argparse `choices` 自动读取 | `feature-completion-values.md` | v0.18.0（PR #63） |
+| 安装后自动装补全 | `completion --install/--uninstall` 在 shell 配置文件里加带标记的块，每次开终端现场生成补全，升级后自动跟上；`install.sh` 默认执行（`--no-completion` 关闭），卸载时删除 | `feature-auto-completion.md` | v0.19.0（PR #65） |
 | 补全与 JSON | `completion bash/zsh/fish`；`list --json`、`list --names` | 同上 | v0.2.0（PR #4） |
 | 清除鉴权覆盖变量 | 启动命令默认 `unset` 四个鉴权变量 | 同上 | v0.2.0（PR #4） |
 
