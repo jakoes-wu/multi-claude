@@ -11,7 +11,7 @@
 
 在一台机器上同时使用多个 [Claude Code](https://code.claude.com/docs) 账号。每个账号有自己的登录、设置和历史记录，还可以有自己的代理，不用再反复退出、重新登录。
 
-它从不复制或导出你的登录信息，也不改你的 shell 配置文件。只有 `list` 会读取账号的访问令牌并联网，向 Anthropic 查询当前套餐（令牌过期时先续期）；`list --offline` 完全不做这些。`doctor --network` 也会联网，但只在你主动加这个选项时，且不带任何登录信息。
+它从不复制或导出你的登录信息，也不改你的 shell 配置文件。只有 `list` 会读取账号的访问令牌并联网，向 Anthropic 查询当前套餐（令牌过期时先续期）；`list --offline` 完全不做这些。`doctor --network` 和可选的[启动前网络检查](#启动前网络检查)也会联网，但只在你主动要求时，且不带任何登录信息。
 
 ```sh
 claude-work        # 用工作账号运行 Claude Code
@@ -39,7 +39,7 @@ claude            -> 行为不变
 ## 功能
 
 - **登录信息只属于你**：从不复制或导出登录信息。只有一个命令会动它：`list` 取各账号的访问令牌（macOS 在钥匙串，Linux 在 `.credentials.json`），向 Anthropic 查询该账号的套餐；访问令牌过期时，按 Claude Code 自己的方式续期，并把新令牌存回原处。令牌只留在内存里，只发往 Anthropic（`api.anthropic.com`，续期时是 `platform.claude.com`），并且走该账号自己的代理。`list --no-refresh` 不写入，`list --offline` 什么都不读。其余命令只查询登录是否存在。`migrate-default` 和 `restore` 会整体搬动账号目录，Linux 上凭据文件随目录一起移动，内容不会被打开。
-- **只有 `list` 与 `doctor --network` 联网**：`list` 的套餐查询（每个账号一次请求，令牌过期时多一次续期请求）和 `doctor --network` 的连通检查（每条代理线路向 `api.anthropic.com`、`platform.claude.com` 各发一次不带凭据的 `HEAD /`，失败时重试一次）是 multi-claude 仅有的网络连接，没有统计上报，也不检查更新；`list --offline` 完全不联网。只有安装脚本、pipx 或 Homebrew 会下载安装包。
+- **只有 `list`、`doctor --network` 与网络检查联网**：`list` 的套餐查询（每个账号一次请求，令牌过期时多一次续期请求）、`doctor --network` 的连通检查（每条代理线路向 `api.anthropic.com`、`platform.claude.com` 各发一次不带凭据的 `HEAD /`，失败时重试一次），以及你为账号开启的[启动前网络检查](#启动前网络检查)（连一次代理端口、不带凭据地请求 `api.anthropic.com` 的 `GET /cdn-cgi/trace`、读 `clash-api` 设置的 Clash / mihomo 控制接口）是 multi-claude 仅有的网络连接，没有统计上报，也不检查更新；`list --offline` 完全不联网。只有安装脚本、pipx 或 Homebrew 会下载安装包。
 - **不改你的 shell**：需要修改 `PATH` 时，只打印要加的那一行，不会改 `~/.zshrc` 或 `~/.bashrc`。
 - **只改你要它改的**：它只写自己的配置与状态文件、启动命令、账号目录（包括 `code` 放在 `<root>/.apps` 里的 VS Code 数据）和共享软链。Claude Code 的设置文件只在两种情况下被修改：`statusline install`（你指定的文件，会先备份）和 `add --config-from`（新账号的 `settings.json`）。
 - **迁移默认账号**：把已有的 `~/.claude` 移进账号根目录，登录不失效，直接运行 `claude` 的行为与之前完全一致。
@@ -52,7 +52,7 @@ claude            -> 行为不变
 
 ## 前置条件
 
-**服务器**：不需要。multi-claude 只在你自己的电脑上运行；仅有的网络请求是 `list` 向 Anthropic 查询套餐和续期令牌，以及 `doctor --network` 的连通检查，都发往 Anthropic。
+**服务器**：不需要。multi-claude 只在你自己的电脑上运行；仅有的网络请求是 `list` 向 Anthropic 查询套餐和续期令牌、`doctor --network` 的连通检查，以及可选的启动前网络检查，都发往 Anthropic（Clash 检查另外读 `clash-api` 设置的 Clash / mihomo 控制接口）。
 
 **你的电脑**：
 
@@ -202,6 +202,41 @@ SOCKS 地址一律拒绝：[Claude Code 不支持 SOCKS 代理](https://code.cla
 **后台会话。** 每个账号的后台 supervisor 继承第一个启动它的 shell 的环境。需要后台会话稳定走代理时，把代理写进该账号自己的 `settings.json` 的 `env`，并把 multi-claude 中该账号的代理设为 `inherit`，避免两处设置互相覆盖。
 
 `CLAUDE_CODE_HTTP_PROXY` 和 `CLAUDE_CODE_HTTPS_PROXY` 不受启动命令影响，`off` 也不清除它们；设置了这两个变量时 `list` 会提示。
+
+### 启动前网络检查
+
+默认关闭，按账号设置。开启后，`claude-<名称>`、`claude-auto`、`run`、`login` 与 `code` 会先检查网络，任一项不通过就不启动 Claude Code（退出码 5）。`mcp` 不检查。
+
+| 设置 | 检查内容 |
+| ---- | ---- |
+| `multi-claude netcheck 名称 basic` | Claude Code 将要使用的代理端口能建立 TCP 连接（超时 3 秒）。 |
+| `multi-claude netcheck 名称 strict [--country 国家代码]` | 先查端口，再分别直连（不走代理）和经代理请求 `https://api.anthropic.com/cdn-cgi/trace`：两次的 `loc` 都必须等于指定国家（默认 `US`）。这一档只支持 `http://` 代理。 |
+| `multi-claude netcheck 名称 --clash-tun on` | Clash / mihomo 开着 TUN 且不在 `direct` 模式，经其外部控制接口的 `GET /configs` 读取。与档位无关。 |
+| `multi-claude netcheck 名称 --clash-global on` | Clash / mihomo 处于全局模式。不同时开 `--clash-tun on` 时只能管住发往代理端口的流量，会打印警告。 |
+| `multi-claude netcheck 名称 --clash on` | 两项 Clash 检查一起开（上面两项的简写；`--clash off` 两项都关）。 |
+| `multi-claude netcheck 名称 off --clash off` | 关闭检查。 |
+
+```sh
+multi-claude proxy work 7901
+multi-claude netcheck work strict              # 开启
+multi-claude netcheck work                     # 显示设置并立即逐项检查（退出码 0 或 5）
+multi-claude clash-api auto                    # 找到正在运行的 Clash / mihomo 控制接口
+multi-claude clash-api 127.0.0.1:9097 --secret-stdin < secret.txt   # 或手动设置
+```
+
+“Claude Code 将要使用的代理”与 `doctor --network` 的算法相同：启动命令的代理设置（`inherit` 时为终端里的代理变量），再被账号 `settings.json` 的 `env` 覆盖。该文件读不出、没有生效的代理、代理是 SOCKS 或写错了、或 `NO_PROXY` 覆盖了 `api.anthropic.com` 时，检查不通过并说明原因。设置档位时若此刻算不出代理只打印警告，因为启动时代理可能来自终端。请求不发往 `api.anthropic.com` 的账号（设了 `ANTHROPIC_BASE_URL`，或用 Bedrock、Vertex、Foundry）照样按 `api.anthropic.com` 检查，结果行里会说明。
+
+`clash-api` 接受 `主机:端口`、`unix:/路径`（macOS、Linux）或 `\\.\pipe\名称`（Windows）；secret 只从标准输入读取，保存在配置文件里。`clash-api auto` 从正在运行的 Clash / mihomo 进程的启动参数及其配置文件（macOS 与 Windows 上还有 Clash Verge 的 `config.yaml`）里找控制接口，逐个用 `GET /configs` 试，保存第一个能应答的；只采用本机地址。开启 Clash 检查而还没设置接口时，会自动做同样的查找。`clash_api` 是本机设置，`apply -f` 会忽略文件里的这一项。
+
+通过时向 stderr 打印一行，如 `multi-claude: network check passed for account work (strict, US; 812 ms)`；不通过时说明哪一项失败，以及本次跳过的写法：`MULTI_CLAUDE_SKIP_NETCHECK=1 claude-work`（PowerShell：`try { $env:MULTI_CLAUDE_SKIP_NETCHECK=1; claude-work } finally { Remove-Item Env:MULTI_CLAUDE_SKIP_NETCHECK }`）。只有值为 `1` 才跳过。启动 Claude Code 前这个变量会被删掉，所以在 Claude Code 里再启动的会话照样检查；`multi-claude env` 不允许设置它。
+
+局限：
+
+- **只在启动时查一次。** Claude Code 运行期间代理或 Clash 断了，Claude Code 可能直连出去。要杜绝这种情况，请用防火墙只允许 Claude Code 经代理联网。
+- **不覆盖 VS Code 扩展和直接运行的 `claude`。** `multi-claude code` 在打开 VS Code 前查一次。
+- **只读启动命令与账号的 `settings.json`。** 固定参数或命令行里的 `--settings`、托管设置（managed settings）、项目里的 `.claude/settings*.json` 都可能改掉代理，检查感知不到。写进设置文件 `env` 里的 `MULTI_CLAUDE_SKIP_NETCHECK` 会传给 Claude Code，multi-claude 删不掉它。
+- POSIX 上开启检查的启动命令会先（在 `/` 下）运行 `multi-claude netgate 名称`，所以 `multi-claude` 必须在 `PATH` 里（否则退出 127），且启动命令运行时才读 `config.json`：`XDG_CONFIG_HOME` 不同时会报账号未登记。升级后请新开终端：`PATH` 里排在前面的旧版 `multi-claude` 不认识 `netgate`，开启检查的启动命令会以退出码 2 拒绝启动。
+- 退出码 5 也可能来自 Claude Code 本身；看 stderr 里有没有 `network check failed`。
 
 ### 环境变量与参数
 
@@ -568,6 +603,8 @@ multi-claude remove main         # 注销账号
 | `multi-claude add 名称 [--proxy P] [--shared [目录] \| --no-shared] [--adopt] [--shared-exclude 项] [--shared-include 项] [--renews 日期\|off] [--config-from 其它账号]` | 新增账号、登记已有目录或修改其选项；`--config-from` 从另一个账号复制一次 `settings.json`；`--renews` 记录续费日（见[续费日](#续费日)）；`--shared 目录` 同时把它设为所有账号的共享目录（默认 `~/.claude-shared`）；`--shared-exclude` 让这个账号不共享某一项，`--shared-include` 撤销 |
 | `multi-claude set 名称 [--proxy P] [--shared [目录] \| --no-shared] [--shared-exclude 项] [--shared-include 项] [--renews 日期\|off]` | 修改已有账号，选项同 `add`（没有 `--adopt`）；账号未登记时返回 1 |
 | `multi-claude proxy 名称 端口\|URL\|off\|inherit` | 设置账号代理 |
+| `multi-claude netcheck 名称 [off\|basic\|strict] [--country 国家代码] [--clash on\|off] [--clash-tun on\|off] [--clash-global on\|off]` | 设置账号的[启动前网络检查](#启动前网络检查)；只给名称时显示设置并立即检查 |
+| `multi-claude clash-api [地址\|auto\|off] [--secret-stdin]` | 显示或设置 `netcheck` 的 Clash 检查所用的 Clash / mihomo 控制接口；`auto` 自动查找正在运行的那个 |
 | `multi-claude env (名称 \| --defaults) [K=V ...] [--unset K ...]` | 设置或删除额外环境变量 |
 | `multi-claude args (名称 \| --defaults) -- [参数 ...]` | 整体替换固定参数；`--` 后面为空表示清空 |
 | `multi-claude remove 名称` | 注销账号并删除其启动命令。**账号目录和登录都会保留** |
@@ -654,6 +691,7 @@ macOS 上，用 `add` 建立的账号，其登录存放在钥匙串里、名称�
 | 2 | 命令行参数不合法 |
 | 3 | 与不归 multi-claude 管理的文件冲突，或改动会让登录失效；未做任何修改 |
 | 4 | 要迁移或恢复的目录正被占用 |
+| 5 | 启动前网络检查不通过，未启动任何程序（`claude-<名称>`、`claude-auto`、`run`、`login`、`code`、`netcheck 名称`） |
 
 ## 卸载
 

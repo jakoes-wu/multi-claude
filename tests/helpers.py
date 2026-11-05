@@ -187,6 +187,8 @@ class CliTestCase(unittest.TestCase):
             "FAKE_CLAUDE_OUT": self.fake_out,
             "FAKE_SECURITY_LOG": self.security_log,
             "MULTI_CLAUDE_TEST_MODE": "1",
+            # Clash 接口查找默认看到一个空进程列表：不扫开发机上真实运行的 Clash（feature-launch-gate §8.1）
+            "MULTI_CLAUDE_TEST_CLASH_PROCESSES": self._empty_clash_processes(),
             "LC_ALL": "C.UTF-8" if sys.platform.startswith("linux") else "en_US.UTF-8",
         }
         if WINDOWS:
@@ -252,9 +254,17 @@ class CliTestCase(unittest.TestCase):
                 full_env[key] = value
         return full_env
 
+    def _empty_clash_processes(self) -> str:
+        path = os.path.join(self.tmp, "clash-processes.json")
+        with open(path, "w") as handle:
+            handle.write("[]")
+        return path
+
     def run_cli(self, *args: str, env: Optional[Dict[str, Optional[str]]] = None,
-                cwd: Optional[str] = None) -> Result:
+                cwd: Optional[str] = None, input: Optional[str] = None) -> Result:
+        # input 为 None 时标准输入接空（不继承测试进程的终端），给了就作为标准输入的内容。
         proc = subprocess.run([sys.executable, "-m", "multi_claude"] + list(args), env=self._merged(env),
+                              input=input if input is not None else "",
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               universal_newlines=True, cwd=cwd or self.tmp, timeout=120, **TEXT_KWARGS)
         return Result(proc)

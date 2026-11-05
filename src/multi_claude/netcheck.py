@@ -640,3 +640,18 @@ def _format(item: _Pending, result: _Result) -> Check:
         message += (" (NO_PROXY covers this host, so Claude Code connects directly instead of through {}; "
                     "remove it from NO_PROXY if that is not intended)".format(_authority(bypassed.host, bypassed.port)))
     return Check(CHECK_ID, level, item.account.name, message)
+
+
+# ---- 供启动前网络检查复用（方案 feature-launch-gate §3）----
+# launchgate 要按与 doctor --network 相同的算法求“Claude 实际会用的代理”，这里只给这些函数起公开名字，
+# 原名与 doctor 的调用点不动、逻辑不变；改它们的行为会同时影响 doctor --network 与启动前检查。
+Proxy = _Proxy
+account_route_env = _account_env
+custom_endpoint = _custom_endpoint
+env_value = _get
+parse_proxy = _parse_proxy
+route = _route
+settings_path = _settings_path
+tunnel = _tunnel
+usable_ca = _usable_ca
+authority = _authority

@@ -18,7 +18,7 @@ sys.path.insert(0, SRC)
 from multi_claude import cli  # noqa: E402
 
 # 示例里出现这些 shell 运算符时，之后的词交给 shell，不是 multi-claude 的参数。
-SHELL_OPERATORS = (">", ">>", "|")
+SHELL_OPERATORS = (">", ">>", "|", "<")
 
 # E3：这两个命令的 --verbose 是自己的功能；其余命令的 --verbose 来自 _add_write_options，是公共写选项，不要求示例覆盖。
 OWN_VERBOSE = ("list", "doctor")
@@ -36,6 +36,7 @@ RUN_SKIPPED = {
 ALLOWED_EXIT = {
     "multi-claude doctor --network": (1, "test mode without MULTI_CLAUDE_TEST_NETCHECK_TARGETS sends nothing "
                                          "and reports every target as an error"),
+    "multi-claude clash-api auto": (1, "the sandbox has no running Clash / mihomo to find"),
 }
 
 
@@ -100,7 +101,7 @@ def parse_like_main(words):
 class HelpExamplesTest(unittest.TestCase):
     def test_e1_every_subcommand_has_examples(self):
         names = list(subparsers())
-        self.assertEqual(len(names), 28)
+        self.assertEqual(len(names), 30)
         for name in names:
             with self.subTest(command=name):
                 self.assertTrue(example_commands(help_text(name)))
@@ -184,6 +185,8 @@ class HelpExamplesRunTest(CliTestCase):
         elif name == "import":
             # 只在 import 沙箱预先导出：export 沙箱若也有这个文件，export 示例会因目标已存在而失败。
             self.ok("export", "work", os.path.join(self.home, "work-settings.tar.gz"))
+        elif name == "clash-api":
+            self.write(os.path.join(self.home, "secret.txt"), "example-secret\n")
         elif name == "apply":
             shutil.copy(os.path.join(self.state, "config.json"), os.path.join(self.home, "accounts.json"))
         elif name == "add":
@@ -200,7 +203,13 @@ class HelpExamplesRunTest(CliTestCase):
         # shlex 不展开 ~，multi-claude 的部分命令也不展开，这里按 shell 的规则展开到沙箱的 home。
         words = [self.home + word[1:] if word == "~" or word.startswith("~/") else word
                  for word in example_words(command)]
-        return self.run_cli(*words, cwd=self.home)
+        # `< 文件` 在 shell 里是标准输入重定向：读出沙箱里的这个文件作为标准输入。
+        full = shlex.split(command)
+        stdin_text = None
+        if "<" in full:
+            with open(os.path.join(self.home, full[full.index("<") + 1])) as handle:
+                stdin_text = handle.read()
+        return self.run_cli(*words, cwd=self.home, input=stdin_text)
 
     def check_examples_run(self, name):
         commands = example_commands(help_text(name))

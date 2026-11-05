@@ -31,6 +31,8 @@ EXIT_ERROR = 1
 EXIT_USAGE = 2
 EXIT_CONFLICT = 3
 EXIT_BUSY = 4
+# 启动前网络检查未通过、拒绝启动（方案 feature-launch-gate §5.2）。
+EXIT_NETCHECK = 5
 
 # orphan_scope 取这个值时，清理启动命令目录里所有不在配置中的受管启动命令。
 ALL_ORPHANS = "all"
@@ -57,7 +59,8 @@ def render_launcher(config: Config, account: Account) -> str:
         python, entry = launcher.windows_command_paths()
         return launcher.render_windows(account.name, account_dir(config, account.name), python, entry)
     return launcher.render(account.name, account.identity, account_dir(config, account.name), default_dir(),
-                           account.proxy, config.effective_env(account), config.effective_args(account))
+                           account.proxy, config.effective_env(account), config.effective_args(account),
+                           net_check=account.net_check.active)
 
 
 def plan(old: Config, new: Config, *, config_exists: bool = True,

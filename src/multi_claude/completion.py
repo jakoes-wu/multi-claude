@@ -13,7 +13,7 @@ from typing import Dict, List, NamedTuple
 SHELLS = ("bash", "zsh", "fish", "powershell")
 
 # 各子命令第 N 个位置参数的候选类型：name 账号名、dir 目录、file 文件、shell 补全的 shell 名、
-# proxy 代理固定值、statusline 该子命令的动作。
+# proxy 代理固定值、statusline 该子命令的动作、netlevel 网络检查档位、clashapi clash-api 的固定取值。
 POSITIONAL_KINDS = {
     "migrate-default": ["name"], "add": ["name"], "proxy": ["name", "proxy"], "env": ["name"],
     "args": ["name"], "remove": ["name"], "usage": ["name"], "completion": ["shell"],
@@ -21,12 +21,14 @@ POSITIONAL_KINDS = {
     "statusline": ["statusline", "file"], "handoff": ["name"], "login": ["name"], "set": ["name"],
     "run": ["name"], "path": ["name"], "restore": ["name"], "code": ["name", "file"],
     "export": ["name", "file"], "import": ["file", "name"], "sessions": ["name"], "artifacts": ["name"],
+    "netcheck": ["name", "netlevel"], "clash-api": ["clashapi"],
 }
 # 选项值是路径、应按文件补全的选项。
 PATH_OPTIONS = ("-f", "--file", "--root", "--bin-dir", "--shared-dir")
 # 选项值是账号名的选项。
 NAME_OPTIONS = ("--default", "--from", "--config-from")
-FIXED_WORDS = {"shell": SHELLS, "proxy": ("off", "inherit"), "statusline": ("install", "uninstall")}
+FIXED_WORDS = {"shell": SHELLS, "proxy": ("off", "inherit"), "statusline": ("install", "uninstall"),
+               "netlevel": ("off", "basic", "strict"), "clashapi": ("auto", "off")}
 
 
 def _positional_cases(indent: str) -> str:
@@ -138,6 +140,8 @@ _multi_claude() {
     shell) candidates="%(shells)s" ;;
     proxy) candidates="off inherit" ;;
     statusline) candidates="install uninstall" ;;
+    netlevel) candidates="off basic strict" ;;
+    clashapi) candidates="auto off" ;;
   esac
   COMPREPLY=($(compgen -W "$candidates" -- "$cur"))
   # bash 只替换当前词最后一个分词字符之后的片段，候选要去掉同样长的前缀。
@@ -209,6 +213,8 @@ _multi_claude() {
     shell) candidates=(%(shells)s) ;;
     proxy) candidates=(off inherit) ;;
     statusline) candidates=(install uninstall) ;;
+    netlevel) candidates=(off basic strict) ;;
+    clashapi) candidates=(auto off) ;;
   esac
   compadd -- $candidates
 }

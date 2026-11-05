@@ -43,6 +43,23 @@ steps to reproduce. You should receive a reply within a week.
   `settings.json` it reads only proxy, `NO_PROXY`, `NODE_EXTRA_CA_CERTS`,
   `ANTHROPIC_BASE_URL` and provider-selection variables. Proxy URLs are
   shown as host and port only.
+- The pre-launch network check (`multi-claude netcheck`, off by default)
+  runs only for accounts where it was turned on, when their launcher,
+  `claude-auto`, `run`, `login` or `code` starts, and for `netcheck NAME`.
+  It opens a TCP connection to the proxy Claude Code would use (worked out
+  as for `doctor --network`), and at the `strict` level fetches
+  `https://api.anthropic.com/cdn-cgi/trace` directly and through that proxy,
+  with no Claude credential, cookie or account data; a proxy user name and
+  password go only to that proxy, in `Proxy-Authorization`. The Clash checks
+  send `GET /configs` to the Clash / mihomo controller set with
+  `multi-claude clash-api` (a TCP address, a unix socket or a named pipe;
+  `clash-api auto` only picks addresses on this machine), with its secret as a
+  bearer token. The secret is read from
+  standard input only, stored in `config.json` (mode 0600), never printed
+  (`clash-api` only says whether one is set) and sent nowhere else.
+  `clash-api auto` reads the command lines of running processes and the
+  Clash configuration files it finds, and tries only addresses on this
+  machine. `MULTI_CLAUDE_SKIP_NETCHECK=1` skips the check for one launch.
 - One command prints conversation content: `multi-claude sessions` reads the
   start and the end of each session file (`projects/*/*.jsonl`) and prints
   each session's title, or the beginning of its first prompt when it has no

@@ -19,7 +19,7 @@ import sys
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import platform
-from .config import IDENTITY_DEFAULT, PROXY_INHERIT, PROXY_OFF, PROXY_VARS
+from .config import IDENTITY_DEFAULT, NETCHECK_SKIP_ENV, PROXY_INHERIT, PROXY_OFF, PROXY_VARS
 from .fsutil import KIND_FILE, entry_kind, read_text
 
 MARKER_PREFIX = "# managed-by: multi-claude account="
@@ -161,8 +161,10 @@ def expand_value(value: str) -> str:
 
 
 def render(name: str, identity: str, account_dir: str, default_dir: str, proxy: str,
-           env: Dict[str, str], args: List[str]) -> str:
+           env: Dict[str, str], args: List[str], *, net_check: bool = False) -> str:
     """生成 POSIX sh 启动命令的完整内容。所有值都经 shlex.quote 转义。
+
+    net_check 为真时（账号开启了启动前网络检查）插入一段检查（_net_check_lines）；为假时输出与旧版逐字节相同。
 
     account_dir 必须是 expand() 的结果（只展开 `~` 并转绝对路径，不做 realpath），
     因为 dir 身份账号的 macOS 登录绑定在这串字符上。default_dir 是 `$HOME/.claude` 展开后的路径，
@@ -181,6 +183,8 @@ def render(name: str, identity: str, account_dir: str, default_dir: str, proxy: 
         "fi",
     ]
     lines.extend(_identity_lines(identity, default_dir))
+    if net_check:
+        lines.extend(_net_check_lines(name))
     lines.append("unset " + " ".join(AUTH_OVERRIDE_ENV))
     for key in sorted(env):
         lines.append("{}={}; export {}".format(key, shlex.quote(expand_value(env[key])), key))
@@ -195,6 +199,25 @@ def render(name: str, identity: str, account_dir: str, default_dir: str, proxy: 
         "",
     ])
     return "\n".join(lines)
+
+
+def _net_check_lines(name: str) -> List[str]:
+    """启动前网络检查段（方案 feature-launch-gate §5.1.3）。
+
+    位置有讲究：放在目录与 default 链接检查之后，报错顺序是“目录 → 链接 → 网络检查 → claude 是否存在”；
+    放在设置账号环境之前，netgate 看到的是父环境，再由它按与启动命令相同的算法求 Claude 实际会用的代理。
+    `cd /`：`python -m` 形式的 multi-claude 包装会把当前目录放进模块搜索路径，在任意目录启动都不能让
+    当前目录里的同名文件被导入。`|| exit $?` 把 5（未通过）、130（中断）、1（配置错误）原样传出。
+    检查通过后 unset 跳过变量，Claude 和它启动的子进程不会继承“跳过”。
+    """
+    return [
+        "if ! command -v multi-claude >/dev/null 2>&1; then",
+        "  echo 'multi-claude: multi-claude not found in PATH; it runs the network check of this account' >&2",
+        "  exit 127",
+        "fi",
+        "(cd / && exec multi-claude netgate {}) || exit $?".format(shlex.quote(name)),
+        "unset " + NETCHECK_SKIP_ENV,
+    ]
 
 
 def _identity_lines(identity: str, default_dir: str) -> List[str]:
