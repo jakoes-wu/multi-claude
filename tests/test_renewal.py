@@ -219,7 +219,9 @@ class RenewsHelpTest(unittest.TestCase):
                     self.parse_example(command)
                 if not argv:
                     continue
+                # 隐藏选项（help=argparse.SUPPRESS，如 list --shared-items）不出现在帮助里，不要求示例。
                 options = {option for action in self.subparser(argv[0])._actions
+                           if action.help != argparse.SUPPRESS
                            for option in action.option_strings} - {"-h", "--help"}
                 if argv[0] in ("set", "add"):
                     options.discard("--verbose")

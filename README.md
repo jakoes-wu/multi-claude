@@ -522,6 +522,8 @@ multi-claude completion fish > ~/.config/fish/completions/multi-claude.fish
 multi-claude completion powershell | Add-Content $PROFILE         # Windows PowerShell
 ```
 
+Completion covers subcommands, options, account names and the values of options and arguments (for example the `netcheck` levels, `on`/`off` after `--clash`, and the shared item names after `--shared-exclude`). Each command above saves a copy of the script, so run it again after upgrading (for PowerShell, remove the earlier block from `$PROFILE` first).
+
 ## Migrating `~/.claude`
 
 The default account is made of three parts that Claude Code finds only when `CLAUDE_CONFIG_DIR` is **not** set: the directory `~/.claude`, the file `~/.claude.json`, and (on macOS) the keychain item `Claude Code-credentials`. On macOS, the keychain item of every other account is tied to the exact path string in `CLAUDE_CONFIG_DIR`, so the default account cannot simply be pointed at a new path.

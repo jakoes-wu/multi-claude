@@ -123,6 +123,9 @@ class HelpExamplesTest(unittest.TestCase):
                 for action in parser._actions:
                     if "-h" in action.option_strings:
                         continue
+                    # 隐藏选项（help=argparse.SUPPRESS）是给脚本用的入口，不出现在帮助里，也就不要求示例。
+                    if action.help == argparse.SUPPRESS:
+                        continue
                     if action.option_strings == ["--verbose"] and name not in OWN_VERBOSE:
                         continue
                     if action.option_strings:
