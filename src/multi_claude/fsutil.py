@@ -96,6 +96,32 @@ def atomic_write(path: str, content: str, mode: int = 0o644) -> None:
     _fsync_dir(directory)
 
 
+def atomic_write_bytes(path: str, data: bytes, mode: int = 0o644) -> None:
+    """与 atomic_write 相同的“临时文件 + fsync + os.replace”，但按字节写入。
+
+    用于改用户的 shell 配置文件：文本模式在 Windows 上会把 \\n 转成 \\r\\n，
+    而这里要保留原文件的 BOM 和换行方式，所以由调用方拼好字节再写。
+    """
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".multi-claude-", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if not platform.IS_WINDOWS:
+            os.chmod(tmp_path, mode)
+        platform.retry_on_sharing_violation(os.replace, tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except FileNotFoundError:
+            pass
+        raise
+    _fsync_dir(directory)
+
+
 def _fsync_dir(directory: str) -> None:
     # 让 rename 本身落盘；部分文件系统不支持对目录 fsync，失败可以忽略。
     try:

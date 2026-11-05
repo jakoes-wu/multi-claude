@@ -11,7 +11,7 @@
 
 在一台机器上同时使用多个 [Claude Code](https://code.claude.com/docs) 账号。每个账号有自己的登录、设置和历史记录，还可以有自己的代理，不用再反复退出、重新登录。
 
-它从不复制或导出你的登录信息，也不改你的 shell 配置文件。只有 `list` 会读取账号的访问令牌并联网，向 Anthropic 查询当前套餐（令牌过期时先续期）；`list --offline` 完全不做这些。`doctor --network` 和可选的[启动前网络检查](#启动前网络检查)也会联网，但只在你主动要求时，且不带任何登录信息。
+它从不复制或导出你的登录信息，只为 Tab 补全改 shell 配置文件，而且只改带标记的那一段，fish 则用一个单独的补全文件（见[诊断与补全](#诊断与补全)）。只有 `list` 会读取账号的访问令牌并联网，向 Anthropic 查询当前套餐（令牌过期时先续期）；`list --offline` 完全不做这些。`doctor --network` 和可选的[启动前网络检查](#启动前网络检查)也会联网，但只在你主动要求时，且不带任何登录信息。
 
 ```sh
 claude-work        # 用工作账号运行 Claude Code
@@ -100,7 +100,7 @@ cd multi-claude
 curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install.sh | sh
 ```
 
-工具装到 `~/.local/share/multi-claude`，`multi-claude` 命令装到 `~/.local/bin`。用 `--prefix DIR` 可以装到别处。请确认 `~/.local/bin` 在 `PATH` 中；安装脚本只给出提示，从不修改 shell 配置文件。
+工具装到 `~/.local/share/multi-claude`，`multi-claude` 命令装到 `~/.local/bin`。用 `--prefix DIR` 可以装到别处。请确认 `~/.local/bin` 在 `PATH` 中；这一点安装脚本只给出提示。Tab 补全则由安装脚本直接装好：它在 `~/.zshrc`、`~/.bashrc`（macOS 上是 `~/.bash_profile`）里加一段带标记的设置，fish 则写一个补全文件；这段设置每次打开终端时现场生成补全，所以升级后自动跟上。不想让它改 shell 配置文件，就加 `--no-completion`（或设 `MULTI_CLAUDE_NO_COMPLETION=1`）；`./install.sh --uninstall` 会删掉这一段。用 pipx 或 Homebrew 安装的，自己运行一次 `multi-claude completion --install`。
 
 `multi-claude` 命令用安装时 `PATH` 上找到的 `python3` 运行。若它是版本管理器的 shim（pyenv、asdf、mise），安装脚本会改写成它背后的真实解释器：shim 每次启动要多花几十毫秒，装了状态栏钩子后每次刷新状态栏都要启动一次。以后卸载了这个 Python 版本，请重新运行安装脚本。
 
@@ -142,9 +142,9 @@ py -m pipx install multi-claude-cli
   （如路径不在这几个目录下、又没有短名）时，`apply` 报为冲突。
 - 退出 Claude（Ctrl+C 或 `/exit`）时，cmd 可能一闪而过“终止批处理操作吗(Y/N)?”：启动命令是批处理文件。提示会自己消失，
   此时 Claude 已正常退出，不丢任何内容。
-- `multi-claude completion powershell | Add-Content $PROFILE` 为 PowerShell 加上 Tab 补全。不要用 `>>`：Windows
-  PowerShell 5.1 会按 UTF-16 追加，把已有的 profile 弄坏。profile 所在目录还不存在时，先运行
-  `New-Item -ItemType Directory -Force (Split-Path $PROFILE)`。
+- `multi-claude completion --install` 给本机装了的每个 PowerShell（5.1 和 7）的 profile 加上 Tab 补全，保持 profile
+  原来的编码。UTF-16 的 profile（Windows PowerShell 5.1 用 `>>` 写出的就是）会报错并保持不变，请先另存为 UTF-8。
+  还没有 profile、而执行策略不允许运行脚本时，不新建 profile。
 
 持续集成在 Windows 上运行 Windows 专属测试（`tests/test_windows.py`）；其余测试只在 macOS 和 Linux 上运行。
 
@@ -508,13 +508,16 @@ VS Code 里的 Claude Code 扩展只认 VS Code 启动时环境中的 `CLAUDE_CO
 `multi-claude doctor --network` 另外检查每个账号能否经它启动时用的代理（含其 `settings.json` 里 `env` 的设置）连上 `api.anthropic.com` 与 `platform.claude.com`。它分步建立连接，连不上时说明卡在哪一步：代理没开、代理连不出去、域名解析失败、加密连接被掐断、证书无法验证、超时，或 `NO_PROXY` 让账号绕过了代理。Claude Code 不支持的 SOCKS 代理和写错的代理地址直接报出，不去连接；https 代理不检查。每个地址每条代理线路发一次 `HEAD /`（失败时重试一次），不带登录信息或令牌；被 `NO_PROXY` 覆盖的地址直接连接检查。
 
 ```sh
-multi-claude completion bash > ~/.local/share/bash-completion/completions/multi-claude
-multi-claude completion zsh > "${fpath[1]}/_multi-claude"   # 或 fpath 中任意目录
-multi-claude completion fish > ~/.config/fish/completions/multi-claude.fish
-multi-claude completion powershell | Add-Content $PROFILE         # Windows PowerShell
+multi-claude completion --install          # 按 $SHELL 判断 shell；Windows 上是 PowerShell
+multi-claude completion --install bash     # 也可以指明：bash、zsh、fish、powershell
+multi-claude completion --uninstall
 ```
 
-补全覆盖子命令、选项、账号名，以及选项和参数的取值（例如 `netcheck` 的档位、`--clash` 之后的 `on`/`off`、`--shared-exclude` 之后的共享项名）。上面每条命令保存的是脚本的一份副本，升级后要重新执行一次（PowerShell 先从 `$PROFILE` 里删掉之前追加的那段）。
+补全覆盖子命令、选项、账号名，以及选项和参数的取值（例如 `netcheck` 的档位、`--clash` 之后的 `on`/`off`、`--shared-exclude` 之后的共享项名）。
+
+`--install` 在 `~/.zshrc`（`$ZDOTDIR/.zshrc`）、`~/.bashrc`（macOS 上是 `~/.bash_profile`）或每个 PowerShell profile 里加一段 `# >>> multi-claude completion >>>` 到 `# <<< multi-claude completion <<<` 之间的设置，fish 则写 `~/.config/fish/completions/multi-claude.fish`。这段设置每次打开终端时现场生成补全（约 0.08 秒；fish 是在第一次补全 `multi-claude` 时生成），所以不论怎样升级都会自动跟上。改动已有文件前先在旁边备份（`.multi-claude-bak.<时间>`）；profile 是符号链接时链接保留。安装脚本会替你执行这一步；执行过 `--uninstall` 之后安装脚本不再加回，直到你再次运行 `--install`。bin 目录还不在 `PATH` 里时，先把它加进 `PATH` 再手动运行 `--install`，或者把 `PATH` 那一行放在这段设置之前。
+
+以前版本保存的补全脚本（`multi-claude completion zsh > ...` 写出的文件、粘贴进配置文件的整段脚本）可以删掉：zsh 和 bash 里这段设置会覆盖它们；PowerShell 里粘贴进 profile 的整段脚本请在运行 `--install` 之前删掉。`multi-claude completion bash|zsh|fish|powershell` 仍然输出补全脚本。
 
 ## 迁移 `~/.claude`
 
@@ -561,7 +564,7 @@ multi-claude remove main         # 注销账号
 
 ### 怎么升级 multi-claude？
 
-用 pipx 安装的，运行 `pipx upgrade multi-claude-cli`；用 Homebrew 安装的，运行 `brew upgrade multi-claude`；否则重新运行安装脚本：`curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install.sh | sh`，或在更新后的克隆目录里运行 `./install.sh`。它只替换工具本身，配置、账号和启动命令都保留。新版本改变了启动命令的内容时，`multi-claude doctor` 会报告启动命令已过期，运行 `multi-claude apply` 即可重写。
+用 pipx 安装的，运行 `pipx upgrade multi-claude-cli`；用 Homebrew 安装的，运行 `brew upgrade multi-claude`；用 `multi-claude completion --install` 装的 Tab 补全会自动跟上。否则重新运行安装脚本：`curl -fsSL https://raw.githubusercontent.com/jakoes-wu/multi-claude/main/install.sh | sh`，或在更新后的克隆目录里运行 `./install.sh`。它只替换工具本身，配置、账号和启动命令都保留。新版本改变了启动命令的内容时，`multi-claude doctor` 会报告启动命令已过期，运行 `multi-claude apply` 即可重写。
 
 ### 直接运行 `claude` 用的是哪个账号？
 
@@ -627,7 +630,8 @@ multi-claude remove main         # 注销账号
 | `multi-claude sessions [名称] [--grep 文字] [--limit N] [--cmd] [--json]` | 列出所有账号、所有目录下的会话，最近更新的在前；加 `--cmd` 再附续聊命令；也可写成 `conversations` |
 | `multi-claude artifacts [名称] [--grep 文字] [--limit N] [--path] [--cmd] [--json]` | 列出所有账号的会话里发布过的 artifact，最近的在前，并标出所属账号；`--path` 附本地源文件，`--cmd` 附续聊命令 |
 | `multi-claude statusline install\|uninstall 文件` | 包装设置文件里的 statusLine 命令，让 `usage` 拿到更新的数值；或还原它 |
-| `multi-claude completion bash\|zsh\|fish` | 输出 shell 补全脚本 |
+| `multi-claude completion --install\|--uninstall [SHELL]` | 往 shell 配置文件加上 Tab 补全（升级后自动跟上），或删掉 |
+| `multi-claude completion bash\|zsh\|fish\|powershell` | 输出 shell 补全脚本 |
 
 所有写命令都支持 `--dry-run`，并且只输出有变化的项；加 `--verbose` 会同时列出已是最新的项。不带参数运行 `multi-claude` 会显示上手说明或账号列表。`env`、`args`、`proxy` 和 `usage 名称` 对未登记的账号返回 1。
 

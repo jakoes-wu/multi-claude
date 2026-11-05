@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `multi-claude completion --install [SHELL]` and `--uninstall [SHELL]` add or remove a marked block in
+  `~/.zshrc`, `~/.bashrc` (`~/.bash_profile` on macOS) or each PowerShell profile, and for fish the file
+  `~/.config/fish/completions/multi-claude.fish`. The block generates the completion when a shell starts, so it
+  stays current after upgrades with any installer. Changed files are backed up first; symlinks, permissions,
+  BOMs and CRLF line endings are kept, and files that are not UTF-8 are left unchanged.
+
+### Changed
+
+- `install.sh` now sets up tab completion by default (`completion --install --auto`) and removes it on
+  `--uninstall`. Opt out with `--no-completion` or `MULTI_CLAUDE_NO_COMPLETION=1`; after
+  `multi-claude completion --uninstall` the installer leaves completion off. For zsh users without a
+  completion system, the block runs `compinit -i`.
+
 ## [0.18.0] - 2026-11-05
 
 ### Added
