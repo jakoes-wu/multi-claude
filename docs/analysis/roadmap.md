@@ -31,6 +31,7 @@
 | 用量 | `usage` 命令；`list --json` 带用量；只读 `.claude.json` 的用量缓存 | `feature-visibility-diagnostics.md` | v0.2.0（PR #4） |
 | 诊断 | `doctor`，只读，`--json`，有错误时退出 1 | 同上 | v0.2.0（PR #4） |
 | 网络自检 | `doctor --network`：按每个账号的代理分步连 `api.anthropic.com`、`platform.claude.com`，报告卡在哪一步 | `feature-network-check.md` | v0.16.0（PR #59） |
+| 启动前网络检查 | `netcheck NAME off\|basic\|strict`、Clash TUN / 全局两项检查、`clash-api ADDRESS\|auto\|off`；不通过时各启动入口退出 5 | `feature-launch-gate.md` | v0.17.0（PR #61） |
 | 补全与 JSON | `completion bash/zsh/fish`；`list --json`、`list --names` | 同上 | v0.2.0（PR #4） |
 | 清除鉴权覆盖变量 | 启动命令默认 `unset` 四个鉴权变量 | 同上 | v0.2.0（PR #4） |
 
