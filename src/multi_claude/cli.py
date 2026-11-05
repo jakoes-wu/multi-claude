@@ -24,8 +24,9 @@ from typing import List, NamedTuple, Optional, Tuple
 from . import (__version__, accounts, artifacts, bundle, completion, doctor, history, hook, identity, launcher, migrate,
                plan, platform, refresh, restore, routes, sessions, shellpath, statusline, usage)
 from .actions import LOG_PREFIX, error, info, warn
-from .config import (DEFAULT_SHARED_DIR, DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, Account, Config, ConfigError, RouteRule,
-                     is_unshareable, load_config, normalize_proxy, parse_config, validate_env_key, validate_name,
+from .config import (DEFAULT_SHARED_DIR, DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, NET_CHECK_LEVELS,
+                     NETCHECK_SKIP_ENV, Account, ClashApi, Config, ConfigError, RouteRule, normalize_clash_address,
+                     normalize_country, is_unshareable, load_config, normalize_proxy, parse_config, validate_env_key, validate_name,
                      validate_renews, validate_route_path, validate_value, config_path)
 from .env import account_env
 from .fsutil import KIND_FILE, KIND_LINK, KIND_MISSING, atomic_write, entry_kind, expand, read_text
@@ -50,6 +51,7 @@ COMMAND_GROUPS = [
     ("Account settings", [
         ("set NAME", "change an account: proxy, sharing, renewal date"),
         ("proxy, env, args", "set the proxy, extra variables or fixed arguments of a launcher"),
+        ("netcheck NAME", "check the network before each launch (proxy, exit country, Clash)"),
         ("rename, remove", "rename or unregister an account"),
         ("migrate-default, restore", "turn the existing ~/.claude into an account, or back"),
         ("export, import", "copy an account's settings to a file and back (no logins)"),
@@ -67,6 +69,7 @@ COMMAND_GROUPS = [
     ("Setup and checks", [
         ("init, apply", "global settings; converge everything to config.json"),
         ("doctor", "check the setup and suggest fixes"),
+        ("clash-api", "set the Clash / mihomo controller used by the network check"),
         ("statusline", "record usage from the status line"),
         ("completion", "print a shell completion script"),
     ]),
@@ -184,6 +187,20 @@ _SUBCOMMAND_EXAMPLES = {
         ("multi-claude proxy work https://proxy.example.com:8443", "any http(s) URL without user or password"),
         ("multi-claude proxy work off", "unset the proxy variables in claude-work"),
         ("multi-claude proxy work inherit --dry-run", "keep the shell's proxy (default); preview only"),
+    ],
+    "netcheck": [
+        ("multi-claude netcheck work", "show the setting and test it now"),
+        ("multi-claude netcheck work basic", "the proxy Claude uses must accept connections"),
+        ("multi-claude netcheck work strict --country JP", "also exit country JP, direct and through the proxy"),
+        ("multi-claude netcheck work --clash-tun on --clash-global off", "only Clash TUN (not direct)"),
+        ("multi-claude netcheck work --clash on", "both Clash checks: TUN and global mode"),
+        ("multi-claude netcheck work off --clash off --dry-run", "turn the check off; preview only"),
+    ],
+    "clash-api": [
+        ("multi-claude clash-api", "show the controller"),
+        ("multi-claude clash-api auto", "find the running Clash / mihomo"),
+        ("multi-claude clash-api 127.0.0.1:9097 --secret-stdin < secret.txt", "set it by hand"),
+        ("multi-claude clash-api off --dry-run", "clear it; preview only"),
     ],
     "env": [
         ("multi-claude env work MAX_THINKING_TOKENS=8000", "add or change a variable"),
@@ -350,6 +367,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_proxy.add_argument("value", help="port (e.g. 7901), http(s) URL, off or inherit")
     _add_write_options(p_proxy)
 
+    p_netcheck = sub.add_parser("netcheck", description="set or test the network check run before each launch "
+                                                        "of an account; a launch that fails it exits 5")
+    p_netcheck.add_argument("name")
+    p_netcheck.add_argument("level", nargs="?", choices=NET_CHECK_LEVELS,
+                            help="off: no proxy check; basic: the proxy Claude uses must accept connections; "
+                                 "strict: also the exit country, direct and through the proxy (omit: keep the "
+                                 "current level)")
+    p_netcheck.add_argument("--country", metavar="CC",
+                            help="two-letter country code the strict level requires (default US)")
+    p_netcheck.add_argument("--clash", choices=("on", "off"),
+                            help="both Clash checks: TUN on and global mode (same as --clash-tun and "
+                                 "--clash-global together)")
+    p_netcheck.add_argument("--clash-tun", choices=("on", "off"),
+                            help="require Clash / mihomo TUN on and a mode other than direct")
+    p_netcheck.add_argument("--clash-global", choices=("on", "off"),
+                            help="require Clash / mihomo in global mode")
+    _add_write_options(p_netcheck)
+
     p_env = sub.add_parser("env", description="set or unset extra environment variables of a launcher")
     p_env.add_argument("items", nargs="*", metavar="NAME|K=V",
                        help="account name (omit with --defaults) followed by K=V assignments")
@@ -401,6 +436,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor.add_argument("--network", action="store_true",
                           help="also connect to api.anthropic.com and platform.claude.com through each account's "
                                "proxy (sends no credentials)")
+
+    p_clash = sub.add_parser("clash-api", description="set the Clash / mihomo controller that the network check "
+                                                      "reads TUN and mode from (a setting of this machine)")
+    p_clash.add_argument("address", nargs="?",
+                         help="HOST:PORT of external-controller, unix:/PATH, \\\\.\\pipe\\NAME (Windows), "
+                              "auto (find the running Clash / mihomo on this machine) or off")
+    p_clash.add_argument("--secret-stdin", action="store_true",
+                         help="read the controller secret from one line of standard input; without it the "
+                              "secret is cleared")
+    _add_write_options(p_clash)
 
     p_route = sub.add_parser("route", description="choose an account by directory for claude-auto: route DIR NAME, "
                                            "route DIR --remove, route --default NAME, route --no-default")
@@ -611,6 +656,8 @@ UNSUPPORTED_PLATFORM = "this platform is not supported yet (macOS, Linux and Win
 # Windows 启动命令调用的隐藏子命令
 LAUNCH_COMMAND = "launch"
 LAUNCH_SEPARATOR = "--"
+# 开启网络检查的 POSIX 启动命令在启动 Claude 前调用的隐藏子命令（launcher._net_check_lines 写死同一个名字）
+NETGATE_COMMAND = "netgate"
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -625,6 +672,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         # Windows 启动命令 claude-<名称>.cmd / claude-auto.cmd 的入口（方案 feature-windows-support D3）：
         # 不走 argparse，免得用户参数里的 --help 之类被当成本工具的选项；只在 Windows 上存在，POSIX 子命令集合不变。
         return cmd_launch(argv[1:])
+    if argv[:1] == [NETGATE_COMMAND]:
+        # 两平台都接受的隐藏子命令：只由开启了网络检查的 POSIX 启动命令调用（launcher._net_check_lines），
+        # 不进 argparse、帮助与补全，账号名以 - 开头等情况也不会被当成选项（方案 feature-launch-gate §5.1.3）。
+        try:
+            return cmd_netgate(argv[1:])
+        except ConfigError as exc:
+            error(str(exc), phase="config")
+            return accounts.EXIT_ERROR
+        except OSError as exc:
+            error("{}: {}".format(type(exc).__name__, exc))
+            return accounts.EXIT_ERROR
     if platform.IS_WINDOWS and argv[:1] == [hook.CAPTURE_COMMAND]:
         # 状态栏钩子在 Windows 上不能 fork，改为起一个后台进程跑本命令采集用量（方案 F1）
         return hook.capture_main()
@@ -718,8 +776,19 @@ def main(argv: Optional[List[str]] = None) -> int:
                 return accounts.EXIT_ERROR
             # 不加写锁：claude mcp 只改 Claude 自己的文件，可能需要交互（如远程服务器登录）。
             return cmd_mcp(args.name, args.launch_args or [])
+        if args.command == "netcheck" and args.level is None and args.country is None and args.clash is None \
+                and args.clash_tun is None and args.clash_global is None:
+            # 不带修改项：显示设置并立即检查一次。只读，不加锁，迁移未完成时也放行。
+            return cmd_netcheck_show(args.name)
+        if args.command == "clash-api" and args.address is None:
+            if args.secret_stdin:
+                raise UsageError("--secret-stdin needs an ADDRESS")
+            return cmd_clash_api_show()
         if _blocked_by_migration(args, notice):
             return accounts.EXIT_ERROR
+        found = _prepare_clash_find(args)
+        if found is not None:
+            return found
         with WriteLock():
             # 加锁前的检查与加锁之间，另一条命令可能刚开始一次迁移，拿到锁后再确认一次。
             if _blocked_by_migration(args, migrate.pending_journal_notice()):
@@ -852,6 +921,14 @@ def dispatch(args: argparse.Namespace) -> int:
             return accounts.EXIT_ERROR
         account.proxy = _checked_proxy(args.value)
         warn_names = [account.name]
+    elif args.command == "netcheck":
+        account = new.find(_checked_name(args.name))
+        if account is None:
+            error("account {!r} is not registered".format(args.name))
+            return accounts.EXIT_ERROR
+        _apply_netcheck_changes(new, account, args)
+    elif args.command == "clash-api":
+        new.clash_api = _clash_api_from_args(args)
     elif args.command == "env":
         target, assignments = _env_target(args)
         env = new.defaults_env if target is None else _registered(new, target).env
@@ -901,6 +978,11 @@ def dispatch(args: argparse.Namespace) -> int:
             renamed[0], renamed[1], accounts.account_dir(new, renamed[1])))
     if code == accounts.EXIT_OK and config_copy is not None:
         code = _copy_settings(config_copy, args.dry_run)
+    if args.command == "netcheck" and code == accounts.EXIT_OK and not args.dry_run:
+        changed = new.find(args.name)
+        if changed is not None:
+            info("network check of {}: {}".format(changed.name, _launchgate().scope_text(changed)
+                                                  if changed.net_check.active else "off"))
     if code == accounts.EXIT_OK:
         accounts.warn_launch_settings(new, warn_names)
         if adopted_dir is not None:
@@ -1095,8 +1177,11 @@ class _RenameConflict(Exception):
     """rename 的新名字已被另一个账号使用，对应退出码 3。"""
 
 
-def _account_process_env(name: str) -> Tuple[Optional[dict], int]:
-    """mcp 与 login 共用：检查账号可用，返回 (该账号的进程环境, 0)；不可用时返回 (None, 退出码)。"""
+def _account_process_env(name: str, gate_hint: Optional[str] = None) -> Tuple[Optional[dict], int]:
+    """mcp 与 login 共用：检查账号可用，返回 (该账号的进程环境, 0)；不可用时返回 (None, 退出码)。
+
+    给了 gate_hint（login）时在账号可用之后做启动前网络检查，未通过返回 (None, 5)；mcp 不检查（方案 §5.1.4）。
+    """
     config, _ = load_config()
     account = config.find(_checked_name(name))
     if account is None:
@@ -1105,6 +1190,10 @@ def _account_process_env(name: str) -> Tuple[Optional[dict], int]:
     process_env, code = _usable_account_env(config, account)
     if process_env is None:
         return None, code
+    if gate_hint is not None:
+        gate_code = _net_gate(config, account, gate_hint, process_env)
+        if gate_code is not None:
+            return None, gate_code
     if platform.which("claude", process_env.get("PATH")) is None:
         error("claude not found in PATH" + _CLAUDE_NOT_FOUND_HINT)
         return None, 127
@@ -1153,7 +1242,8 @@ def cmd_run(name: Optional[str], command: List[str]) -> int:
         # 固定参数按启动命令的规则展开 `~`（launcher.render），两种启动方式收到的参数才逐项相同。
         command = ["claude"] + [launcher.expand_value(arg) for arg in config.effective_args(account)]
     return _exec_as(config, account, command,
-                    not_found_hint=_CLAUDE_NOT_FOUND_HINT if command[0] == "claude" else "")
+                    not_found_hint=_CLAUDE_NOT_FOUND_HINT if command[0] == "claude" else "",
+                    gate_hint="multi-claude run {}".format(account.name))
 
 
 # 找不到 claude 时附上的官方安装方法（https://code.claude.com/docs/en/setup，2026-10-03 核对）。
@@ -1218,6 +1308,10 @@ def cmd_launch(argv: List[str]) -> int:
             sys.stderr.write("multi-claude: {} no longer points to {}; restore the link or run "
                              "multi-claude migrate-default again\n".format(accounts.default_dir(), directory))
             return accounts.EXIT_ERROR
+        # 与 POSIX 启动命令的顺序相同：目录 → 链接 → 网络检查 → claude 是否存在
+        gate_code = _net_gate(config, account, "claude-" + account.name)
+        if gate_code is not None:
+            return gate_code
         command = (["claude"] + [launcher.expand_value(arg) for arg in config.effective_args(account)]
                    + user_args)
         return _launch_claude(command, account_env(config, account, os.environ))
@@ -1234,14 +1328,20 @@ def _launch_claude(command: List[str], process_env: dict) -> int:
     return _call_command(command, process_env)
 
 
-def _exec_as(config: Config, account: Account, command: List[str], not_found_hint: str = "") -> int:
+def _exec_as(config: Config, account: Account, command: List[str], not_found_hint: str = "",
+             gate_hint: Optional[str] = None) -> int:
     """run 与 code 共用：账号可用时以它的启动命令环境 exec 目标命令，成功则不返回。
 
-    返回值只出现在失败时：账号不可用 1，PATH 中找不到命令 127。
+    返回值只出现在失败时：账号不可用 1，网络检查未通过 5，PATH 中找不到命令 127。
+    gate_hint 只由 run 传入；code 在建目录之前自己检查，这里不再查第二次。
     """
     process_env, code = _usable_account_env(config, account)
     if process_env is None:
         return code
+    if gate_hint is not None:
+        gate_code = _net_gate(config, account, gate_hint, process_env)
+        if gate_code is not None:
+            return gate_code
     if platform.which(command[0], process_env.get("PATH")) is None:
         error("{} not found in PATH{}".format(command[0], not_found_hint))
         return 127
@@ -1279,6 +1379,9 @@ def cmd_code(name: str, path: Optional[str], code_args: List[str]) -> int:
     process_env, code = _usable_account_env(config, account)
     if process_env is None:
         return code
+    gate_code = _net_gate(config, account, "multi-claude code {}".format(account.name), process_env)
+    if gate_code is not None:
+        return gate_code
     if platform.which("code", process_env.get("PATH")) is None:
         error("code not found in PATH{}".format(_CODE_NOT_FOUND_HINT))
         return 127
@@ -1290,6 +1393,214 @@ def cmd_code(name: str, path: Optional[str], code_args: List[str]) -> int:
              "`open --env`, so the values are briefly visible in the process list")
     command = ["code", "--user-data-dir", data_dir] + ([path] if path else []) + list(code_args)
     return _exec_as(config, account, command, not_found_hint=_CODE_NOT_FOUND_HINT)
+
+
+def _net_gate(config: Config, account: Account, hint: str, process_env: Optional[dict] = None) -> Optional[int]:
+    """启动前网络检查（方案 feature-launch-gate §5.1.4）：返回 None 表示放行，否则返回调用方应直接返回的退出码。
+
+    未开启、或账号目录不存在时不检查：目录错误交给原有路径报告，与启动命令里“目录 → 检查 → claude”的顺序一致。
+    失败返回 EXIT_NETCHECK（5），此时没有启动任何程序；Ctrl+C 中断检查返回 130（与 shell 的 SIGINT 约定一致）。
+    process_env 是调用方已算好的子进程环境：放行后从里面删掉跳过变量，Claude 及其子进程不继承“跳过”，
+    否则在 Claude 里再开一个开启检查的账号也会被跳过。
+    """
+    if not account.net_check.active or not os.path.isdir(accounts.account_dir(config, account.name)):
+        return None
+    try:
+        failure = _launchgate().gate(config, account, hint)
+    except KeyboardInterrupt:
+        sys.stderr.write("multi-claude: network check interrupted\n")
+        return 130
+    if process_env is not None:
+        process_env.pop(NETCHECK_SKIP_ENV, None)
+    if failure is None:
+        return None
+    sys.stderr.write(failure + "\n")
+    sys.stderr.flush()
+    return accounts.EXIT_NETCHECK
+
+
+def cmd_netgate(argv: List[str]) -> int:
+    """隐藏子命令 `netgate NAME`：开启网络检查的 POSIX 启动命令在启动 Claude 前调用，通过返回 0，未通过返回 5。"""
+    if len(argv) != 1:
+        sys.stderr.write("multi-claude: usage: multi-claude {} NAME\n".format(NETGATE_COMMAND))
+        return accounts.EXIT_USAGE
+    config, exists = load_config()
+    account = config.find(argv[0]) if exists else None
+    if account is None:
+        # 带上配置路径：启动命令在运行时读配置，换了 XDG_CONFIG_HOME 就会读到另一份（方案 §3）。
+        error("account {!r} is not registered in {}".format(argv[0], config_path()))
+        return accounts.EXIT_ERROR
+    gate_code = _net_gate(config, account, "claude-" + account.name)
+    return accounts.EXIT_OK if gate_code is None else gate_code
+
+
+def _launchgate():
+    """延迟导入网络检查模块：只有真正要检查或显示检查设置时才加载它，
+    未开启检查的账号（Windows 上每次 `.cmd` 启动都经过 cli）启动速度不受影响。"""
+    from . import launchgate
+    return launchgate
+
+
+def cmd_netcheck_show(name: str) -> int:
+    """`netcheck NAME`：显示设置并立即检查一次，逐项列出（不在第一个失败处停下）。只读、不加锁。"""
+    config, exists = load_config()
+    account = config.find(_checked_name(name)) if exists else None
+    if account is None:
+        error("account {!r} is not registered".format(name))
+        return accounts.EXIT_ERROR
+    if not account.net_check.active:
+        print("network check is off for {}".format(account.name))
+        return accounts.EXIT_OK
+    print("network check of {}: {}".format(account.name, _launchgate().scope_text(account)))
+    try:
+        results = _launchgate().run_checks(config, account, stop_on_failure=False)
+    except KeyboardInterrupt:
+        sys.stderr.write("multi-claude: network check interrupted\n")
+        return 130
+    for result in results:
+        print("{:<4} {} {} ({} ms)".format("ok" if result.ok else "fail", result.item, result.detail,
+                                           result.elapsed_ms))
+    return accounts.EXIT_OK if all(result.ok for result in results) else accounts.EXIT_NETCHECK
+
+
+def cmd_clash_api_show() -> int:
+    """`clash-api`：显示 Clash 接口设置；secret 只说有没有设置，不显示内容。"""
+    config, _ = load_config()
+    if config.clash_api is None:
+        print("Clash controller is not set")
+    else:
+        print("Clash controller: {} (secret {})".format(config.clash_api.address,
+                                                         "set" if config.clash_api.secret else "not set"))
+    return accounts.EXIT_OK
+
+
+def _apply_netcheck_changes(config: Config, account: Account, args: argparse.Namespace) -> None:
+    """按 netcheck 的写形态修改账号设置；按改完后的结果校验，不合法时抛 UsageError（退出 2）。
+
+    与 multi-codex 不同，不因代理是 inherit / off 拒绝设置：Claude 实际用的代理可能来自终端或账号的
+    settings.json，要到启动时才能定；此刻算出的线路会让启动被拒时只 warn（方案 §5.1.5）。
+    """
+    check = account.net_check
+    if args.level is not None:
+        check.level = args.level
+    if args.country is not None:
+        try:
+            check.country = normalize_country(args.country)
+        except ValueError as exc:
+            raise UsageError(str(exc))
+    _check_clash_flags(args)
+    if args.clash is not None:
+        check.clash_tun = check.clash_global = args.clash == "on"
+    if args.clash_tun is not None:
+        check.clash_tun = args.clash_tun == "on"
+    if args.clash_global is not None:
+        check.clash_global = args.clash_global == "on"
+    if args.country is not None and not check.active:
+        # 未开启的账号不保存检查设置（Account.to_dict 只在开启时写 net_check），明说一句，免得以为已记下。
+        warn("the network check of {} is off, so --country is not saved; turn it on with "
+             "`multi-claude netcheck {} strict --country {}`".format(account.name, account.name, check.country))
+    problem = _launchgate().setting_warning(config, account)
+    if problem:
+        warn(problem)
+    if check.clash_global and not check.clash_tun:
+        # 只查全局防不住直连回落：Claude 不走代理端口时 Clash 根本接不到这些流量。每次写都提醒，不只在改动时。
+        warn("global mode without TUN only covers traffic sent to the proxy port; a direct connection is not "
+             "caught. Add --clash-tun on to cover it")
+    found = getattr(args, "found_clash", None)
+    if check.clash and config.clash_api is not None and found is not None:
+        # 加锁前找到了接口，但等锁期间另一条命令已经设好了接口：不覆盖，说明一句，免得以为已写入。
+        info("a Clash controller was set meanwhile ({}); the one found is not used".format(config.clash_api.address))
+    if check.clash and config.clash_api is None:
+        if found is not None:
+            # 加锁前已找到本机 Clash 接口（_prepare_clash_find），随本次写入一起保存。
+            config.clash_api = found
+        else:
+            # 允许先设账号再设接口；启动时会失败并提示设置接口。
+            warn("the Clash controller is not set; launches of {} will be refused until you run "
+                 "`multi-claude clash-api auto` or `multi-claude clash-api ADDRESS`".format(account.name))
+
+
+def _check_clash_flags(args: argparse.Namespace) -> None:
+    """--clash 是两项一起的简写，与单项开关同时给出时含义不清，直接拒绝（退出 2）。"""
+    if args.clash is not None and (args.clash_tun is not None or args.clash_global is not None):
+        raise UsageError("--clash sets both Clash checks; use it alone or use --clash-tun / --clash-global")
+
+
+def _prepare_clash_find(args: argparse.Namespace) -> Optional[int]:
+    """加锁前找本机 Clash 接口（方案 §5.1.5），结果放在 args.found_clash 供写命令使用。
+
+    只在两种情况下查找：`clash-api auto`；netcheck 开启 Clash 检查而接口尚未设置。查找要枚举进程
+    （Windows 上最长等 90 秒），所以放在迁移检查之后、写锁之前，不长时间占着锁。返回 None 继续，
+    返回整数时调用方直接以它退出；参数冲突抛 UsageError（退出 2），在查找之前判断，免得白等。
+    """
+    args.found_clash = None
+    if args.command == "clash-api" and args.address is not None and args.address.lower() == "auto":
+        if args.secret_stdin:
+            raise UsageError("--secret-stdin cannot be used with auto; mihomo does not check the secret on a "
+                             "unix socket or named pipe, and a TCP secret is read from Clash itself")
+        return _find_clash(args, required=True)
+    if args.command != "netcheck":
+        return None
+    _check_clash_flags(args)
+    if "on" not in (args.clash, args.clash_tun, args.clash_global):
+        return None
+    config, exists = load_config()
+    if not exists or config.find(args.name) is None or config.clash_api is not None:
+        # 账号未登记交给 dispatch 照常报错；接口已设置则不覆盖。
+        return None
+    _find_clash(args, required=False)
+    return None
+
+
+def _find_clash(args: argparse.Namespace, required: bool) -> Optional[int]:
+    from . import clashfind
+    api, detail, notes = clashfind.find_controller()
+    if api is None:
+        if not required:
+            if args.verbose:
+                for note in notes:
+                    _find_note("  " + note, prefix=False)
+            return None
+        error("no working Clash / mihomo controller found; is Clash running? Set one by hand with "
+              "`multi-claude clash-api ADDRESS`")
+        for note in notes or ["no Clash / mihomo process or configuration file was found"]:
+            _find_note("  " + note, prefix=False)
+        return accounts.EXIT_ERROR
+    if args.verbose:
+        for note in notes:
+            _find_note("  " + note, prefix=False)
+    _find_note("found Clash controller {} ({})".format(api.address, detail))
+    args.found_clash = api
+    return None
+
+
+def _find_note(message: str, prefix: bool = True) -> None:
+    """查找过程的说明写 stderr：stdout 留给写命令的动作行；说明里只有地址与来源，不含 secret。"""
+    sys.stdout.flush()
+    sys.stderr.write("{}{}\n".format(LOG_PREFIX + " " if prefix else "", message))
+
+
+def _clash_api_from_args(args: argparse.Namespace) -> Optional[ClashApi]:
+    """clash-api 的写形态：返回新设置，off 返回 None。secret 只从标准输入读，不接受命令行参数（ps 可见）。
+
+    auto 时返回加锁前已找到的设置（_prepare_clash_find）。
+    """
+    if args.address.lower() == "auto":
+        return args.found_clash
+    if args.address.lower() == "off":
+        if args.secret_stdin:
+            raise UsageError("--secret-stdin cannot be used with off")
+        return None
+    try:
+        address = normalize_clash_address(args.address)
+    except ValueError as exc:
+        raise UsageError(str(exc))
+    secret = ""
+    if args.secret_stdin:
+        secret = sys.stdin.readline().rstrip("\r\n")
+        if not secret:
+            raise UsageError("no secret was read from standard input")
+    return ClashApi(address, secret)
 
 
 def _private_dirs(root: str, parts: List[str]) -> str:
@@ -1335,7 +1646,7 @@ def cmd_login(name: str, claude_args: List[str]) -> int:
     凭据由 Claude 自己写入该账号的钥匙串条目或凭据文件，本命令不读写凭据。
     不带账号的固定参数：取多个值的选项会把 `auth login` 当成自己的值吞掉（同 mcp）。
     """
-    process_env, code = _account_process_env(name)
+    process_env, code = _account_process_env(name, gate_hint="multi-claude login {}".format(name))
     if process_env is None:
         return code
     login_args = list(claude_args)
@@ -1590,7 +1901,22 @@ def _load_apply_file(path: str, old: Config) -> Config:
             raw = handle.read()
     except OSError as exc:
         raise ConfigError("cannot read {}: {}".format(path, exc))
+    # Clash 接口地址与 secret 是本机状态（各机器的 Clash 配置不同）：先从原始 JSON 里拿掉再校验，
+    # 否则文件里另一个平台的地址（如在 macOS 上写了 \\.\pipe\…）会让整个 apply 校验失败。
+    clash_written = False
+    try:
+        document = json.loads(raw)
+    except ValueError:
+        document = None  # 不是合法 JSON，交给 parse_config 给出统一的报错
+    if isinstance(document, dict) and "clash_api" in document:
+        clash_written = True
+        del document["clash_api"]
+        raw = json.dumps(document)
     new = parse_config(raw, path)
+    if clash_written:
+        warn("'clash_api' in {} is ignored; it is a setting of this machine, change it with "
+             "`multi-claude clash-api`".format(path))
+    new.clash_api = old.clash_api
     skipped = set()
     for name, account in list(new.accounts.items()):
         current = old.find(account.name)

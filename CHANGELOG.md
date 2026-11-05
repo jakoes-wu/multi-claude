@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Pre-launch network check, per account and off by default: `multi-claude netcheck NAME basic` requires
+  the proxy Claude Code will use (the launcher's proxy, overridden by the `env` of the account's
+  `settings.json`) to accept connections; `strict [--country CC]` also requires
+  `https://api.anthropic.com/cdn-cgi/trace` to report that country (default `US`), directly and through
+  the proxy. `--clash-tun on` requires Clash / mihomo TUN on and a mode other than direct,
+  `--clash-global on` requires global mode, `--clash on` sets both. When a check fails,
+  `claude-<name>`, `claude-auto`, `run`, `login` and `code` exit with the new code 5 without starting
+  anything; `MULTI_CLAUDE_SKIP_NETCHECK=1` skips it once. `netcheck NAME` shows the setting and runs the
+  checks now.
+- `multi-claude clash-api ADDRESS|auto|off [--secret-stdin]` sets the Clash / mihomo controller used by
+  the Clash checks; `auto` finds the running one from process arguments and configuration files.
+- Older versions do not know these settings: they launch without the check, and their next write drops
+  `net_check` and `clash_api` from the configuration. Do not mix versions on one machine while a check
+  is on.
+
 ## [0.16.0] - 2026-11-03
 
 ### Added

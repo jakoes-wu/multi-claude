@@ -55,7 +55,8 @@ jobs:
         run: python -m unittest discover -s tests -t tests -v
       - name: Test (Windows)
         # The other suites drive the POSIX sh launchers, symlinks and permission bits;
-        # test_windows covers the Windows code paths (launch, junctions, locks, migration, completion).
+        # test_windows covers the Windows code paths (launch, junctions, locks, migration, completion);
+        # test_launchgate covers the pre-launch network check, including the launch entry and named pipes.
         if: runner.os == 'Windows'
-        run: python -m unittest -v test_windows
+        run: python -m unittest -v test_windows test_launchgate
         working-directory: tests

@@ -11,7 +11,7 @@
 
 Use several [Claude Code](https://code.claude.com/docs) accounts on one machine, at the same time. Each account keeps its own login, settings and history and, if you like, its own proxy. No more logging out and in again.
 
-It never copies or exports your login and never edits your shell startup files. Only `list` reads an account's access token and goes online, to ask Anthropic for the current plan (renewing the token first if it has expired); `list --offline` skips all of that. `doctor --network` also goes online, but only when you ask for it and without any login.
+It never copies or exports your login and never edits your shell startup files. Only `list` reads an account's access token and goes online, to ask Anthropic for the current plan (renewing the token first if it has expired); `list --offline` skips all of that. `doctor --network` and the optional [pre-launch network check](#pre-launch-network-check) also go online, but only when you ask for them and without any login.
 
 ```sh
 claude-work        # Claude Code with your work account
@@ -39,7 +39,7 @@ The launchers are plain shell scripts. They keep working even if you uninstall m
 ## Features
 
 - **Your login stays yours** — logins are never copied or exported. One command touches them: `list` takes each account's access token (from the keychain, or `.credentials.json` on Linux) to ask Anthropic which plan the account is on, and when that token has expired it renews it the way Claude Code does and saves the new one in the same place. Tokens stay in memory and go only to Anthropic (`api.anthropic.com`, and `platform.claude.com` for a renewal), through that account's proxy. `list --no-refresh` never writes, `list --offline` reads nothing. Every other command only checks whether a login exists. `migrate-default` and `restore` move whole account directories, and on Linux the credentials file moves with its directory without being opened.
-- **Only `list` and `doctor --network` go online** — the plan lookup of `list` (one request per account, plus one to renew an expired token) and the connection check of `doctor --network` (one `HEAD /` without credentials to `api.anthropic.com` and `platform.claude.com` per proxy, repeated once if it fails) are the only connections multi-claude makes: no telemetry, no usage reporting, no update checks. `list --offline` makes none. Only the installer, pipx or Homebrew download the package.
+- **Only `list`, `doctor --network` and the network check go online** — the plan lookup of `list` (one request per account, plus one to renew an expired token), the connection check of `doctor --network` (one `HEAD /` without credentials to `api.anthropic.com` and `platform.claude.com` per proxy, repeated once if it fails) and, for accounts where you turned it on, the [pre-launch network check](#pre-launch-network-check) (a TCP connection to the proxy port, `GET /cdn-cgi/trace` on `api.anthropic.com` without credentials, and the Clash / mihomo controller set with `clash-api`) are the only connections multi-claude makes: no telemetry, no usage reporting, no update checks. `list --offline` makes none. Only the installer, pipx or Homebrew download the package.
 - **Leaves your shell alone** — when `PATH` needs a change, it prints the line to add instead of editing `~/.zshrc` or `~/.bashrc`.
 - **Changes only what you ask** — it writes its own configuration and state, the launchers, account directories (including the VS Code data that `code` keeps in `<root>/.apps`) and shared links. A Claude Code settings file is changed only by `statusline install` (the file you name, with a backup) and `add --config-from` (the new account's `settings.json`).
 - **Migrate the default account** — move your existing `~/.claude` into the account root without logging out. `claude` keeps working exactly as before.
@@ -52,7 +52,7 @@ The launchers are plain shell scripts. They keep working even if you uninstall m
 
 ## Prerequisites
 
-**Servers.** None. multi-claude runs only on your own computer; its only network requests are the plan lookups and token renewals of `list` and the connection check of `doctor --network`, all sent to Anthropic.
+**Servers.** None. multi-claude runs only on your own computer; its only network requests are the plan lookups and token renewals of `list`, the connection check of `doctor --network` and the optional pre-launch network check, all sent to Anthropic (plus, for the Clash checks, the Clash / mihomo controller set with `clash-api`).
 
 **Your computer.**
 
@@ -210,6 +210,41 @@ SOCKS URLs are rejected: [Claude Code does not support SOCKS proxies](https://co
 **Background sessions.** The background supervisor of an account inherits the environment of the shell that first starts it. If you need background sessions to use a proxy reliably, put the proxy in that account's own `settings.json` `env` block and set the account's proxy in multi-claude to `inherit`, so the two settings do not fight each other.
 
 `CLAUDE_CODE_HTTP_PROXY` and `CLAUDE_CODE_HTTPS_PROXY` are not changed by launchers, not even with `off`; `list` mentions them when they are set.
+
+### Pre-launch network check
+
+Off by default, set per account. When it is on, `claude-<name>`, `claude-auto`, `run`, `login` and `code` check the network first and refuse to start Claude Code when a check fails (exit code 5). `mcp` is not checked.
+
+| Setting | Checks |
+| ---- | ---- |
+| `multi-claude netcheck NAME basic` | The proxy Claude Code will use accepts a TCP connection (3 s timeout). |
+| `multi-claude netcheck NAME strict [--country CC]` | The port, then `https://api.anthropic.com/cdn-cgi/trace` fetched directly (no proxy) and through the proxy: both must report `loc` equal to `CC` (default `US`). Only `http://` proxies are supported here. |
+| `multi-claude netcheck NAME --clash-tun on` | Clash / mihomo has TUN on and is not in `direct` mode, read from `GET /configs` of its external controller. Independent of the level. |
+| `multi-claude netcheck NAME --clash-global on` | Clash / mihomo is in global mode. Without `--clash-tun on` it only covers traffic sent to the proxy port, so a warning is printed. |
+| `multi-claude netcheck NAME --clash on` | Both Clash checks (shorthand for the two above; `--clash off` turns both off). |
+| `multi-claude netcheck NAME off --clash off` | Turn it off. |
+
+```sh
+multi-claude proxy work 7901
+multi-claude netcheck work strict              # turn it on
+multi-claude netcheck work                     # show the setting and run every check now (exit 0 or 5)
+multi-claude clash-api auto                    # find the running Clash / mihomo controller
+multi-claude clash-api 127.0.0.1:9097 --secret-stdin < secret.txt   # or set it by hand
+```
+
+"The proxy Claude Code will use" is worked out the same way as `doctor --network`: the launcher's proxy setting (or your shell's proxy variables with `inherit`), overridden by the `env` block of the account's `settings.json`. If that file cannot be read, no proxy is in effect, the proxy is SOCKS or malformed, or `NO_PROXY` covers `api.anthropic.com`, the check fails and says why. Setting a level while no proxy is in effect only prints a warning, because the proxy may come from the shell at launch. An account whose requests go elsewhere (`ANTHROPIC_BASE_URL`, Bedrock, Vertex or Foundry) is still checked against `api.anthropic.com`, and the result line says so.
+
+`clash-api` takes `HOST:PORT`, `unix:/PATH` (macOS, Linux) or `\\.\pipe\NAME` (Windows); the secret is read from standard input only and is stored in the configuration file. `clash-api auto` reads the controller from the arguments of running Clash / mihomo processes and their configuration files (and Clash Verge's `config.yaml` on macOS and Windows), tries each one with `GET /configs`, and saves the first that answers; it only uses addresses on this machine. Turning a Clash check on while no controller is set runs the same search. `clash_api` is a setting of this machine: `apply -f` ignores it in the file.
+
+A launch that passes prints one line to stderr, `multi-claude: network check passed for account work (strict, US; 812 ms)`; a failed one names the check that failed and how to skip it once: `MULTI_CLAUDE_SKIP_NETCHECK=1 claude-work` (PowerShell: `try { $env:MULTI_CLAUDE_SKIP_NETCHECK=1; claude-work } finally { Remove-Item Env:MULTI_CLAUDE_SKIP_NETCHECK }`). Only the value `1` skips. The variable is removed before Claude Code starts, so a session started from inside Claude Code is checked again; `multi-claude env` refuses to set it.
+
+Limits:
+
+- **It checks once, at launch.** If the proxy or Clash goes down while Claude Code is running, Claude Code may connect directly. To rule that out, block Claude Code from the network in a firewall except through the proxy.
+- **The VS Code extension and plain `claude` are not covered.** `multi-claude code` checks once before opening VS Code.
+- **Only the launcher and the account's `settings.json` are read.** `--settings` in fixed or command-line arguments, managed settings and a project's `.claude/settings*.json` can change the proxy without the check knowing. A `MULTI_CLAUDE_SKIP_NETCHECK` written into a settings file `env` block reaches Claude Code but is not removed by multi-claude.
+- On POSIX the checked launcher runs `multi-claude netgate NAME` first (from `/`), so `multi-claude` must be on `PATH` (exit 127 otherwise) and the launcher reads `config.json` when it runs: with a different `XDG_CONFIG_HOME` it reports that the account is not registered. After upgrading, open a new terminal: an older `multi-claude` still first on `PATH` does not know `netgate`, and a checked launcher then refuses to start with exit code 2.
+- Exit code 5 can also come from Claude Code itself; look for `network check failed` on stderr.
 
 ### Environment variables and arguments
 
@@ -576,6 +611,8 @@ Every command's `--help` ends with examples you can copy, covering its options, 
 | `multi-claude add NAME [--proxy P] [--shared [DIR] \| --no-shared] [--adopt] [--shared-exclude ITEM] [--shared-include ITEM] [--renews DATE\|off] [--config-from OTHER]` | Add an account, adopt an existing directory, or change its options. `--config-from` copies `settings.json` from OTHER once. `--renews` records the renewal date (see [Renewal date](#renewal-date)). `--shared DIR` also makes DIR the shared directory for every account (default `~/.claude-shared`). `--shared-exclude` keeps one shared item out of this account; `--shared-include` undoes it. |
 | `multi-claude set NAME [--proxy P] [--shared [DIR] \| --no-shared] [--shared-exclude ITEM] [--shared-include ITEM] [--renews DATE\|off]` | Change an existing account; same options as `add` without `--adopt`. Returns 1 for an account that is not registered. |
 | `multi-claude proxy NAME PORT\|URL\|off\|inherit` | Set an account's proxy. |
+| `multi-claude netcheck NAME [off\|basic\|strict] [--country CC] [--clash on\|off] [--clash-tun on\|off] [--clash-global on\|off]` | Set the [pre-launch network check](#pre-launch-network-check) of an account; with only NAME, show it and run the checks now. |
+| `multi-claude clash-api [ADDRESS\|auto\|off] [--secret-stdin]` | Show or set the Clash / mihomo controller used by the Clash checks of `netcheck`; `auto` finds the running one. |
 | `multi-claude env (NAME \| --defaults) [K=V ...] [--unset K ...]` | Set or remove extra environment variables. |
 | `multi-claude args (NAME \| --defaults) -- [ARG ...]` | Replace the fixed arguments; `--` with nothing after it clears them. |
 | `multi-claude remove NAME` | Unregister an account and delete its launcher. **The directory and the login are kept.** |
@@ -662,6 +699,7 @@ If you move an account directory yourself, its launcher reports that the directo
 | 2 | Invalid command-line arguments |
 | 3 | Conflict with files multi-claude does not own, or a change that would break a login; nothing was changed |
 | 4 | The directory to migrate or restore is in use |
+| 5 | The pre-launch network check failed; nothing was started (`claude-<name>`, `claude-auto`, `run`, `login`, `code`, `netcheck NAME`) |
 
 ## Uninstalling
 

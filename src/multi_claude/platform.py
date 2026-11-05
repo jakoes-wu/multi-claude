@@ -893,6 +893,97 @@ def split_command_line(command: str) -> List[str]:
         kernel32.LocalFree(ctypes.cast(argv, ctypes.c_void_p))
 
 
+# ---- 进程参数列表（feature-launch-gate §4）：供 `clash-api auto` 找正在运行的 Clash / mihomo 内核 ----
+
+# 测试钩子：指向 JSON 进程列表（格式同 Win32_Process 的 ConvertTo-Json 输出，只用 CommandLine）。
+# 只在 MULTI_CLAUDE_TEST_MODE=1 时生效；测试默认把它设成空列表，开发机上真实运行的 Clash 不会被找到并写进测试配置。
+TEST_CLASH_PROCESSES_ENV = "MULTI_CLAUDE_TEST_CLASH_PROCESSES"
+
+
+def list_process_argv() -> List[List[str]]:
+    """列出本机所有用户的进程参数列表（参数 0 是程序）。读不到参数的进程（权限、已退出）跳过。
+
+    与 _list_processes 不同，这里要看其它用户的进程：Clash Verge 服务模式下内核属主是 root。
+    枚举本身失败时抛异常：Windows 上是 BusyCheckError（PowerShell 出错或超时），POSIX 上是 OSError
+    （ps 不存在或执行失败）；由调用方决定是否继续。只读，不影响任何进程。
+    """
+    listing = test_hook_value(TEST_CLASH_PROCESSES_ENV)
+    if listing:
+        with open(listing, "rb") as handle:
+            text = handle.read().decode("utf-8", "replace")
+        data = json.loads(text) if text.strip() else []
+        if isinstance(data, dict):
+            data = [data]
+        commands = [item.get("CommandLine") for item in data if isinstance(item, dict)]
+        return [_split_any(command) for command in commands if isinstance(command, str) and command]
+    if IS_WINDOWS:
+        processes, _ = _list_processes_windows(set())
+        return [info.argv for info in processes if info.argv]
+    if sys.platform.startswith("linux") and os.path.isdir("/proc/self"):
+        return _proc_argv()
+    return _ps_argv()
+
+
+def _split_any(command: str) -> List[str]:
+    if IS_WINDOWS:
+        return split_command_line(command)
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return command.split()
+
+
+def _proc_argv() -> List[List[str]]:
+    """Linux：/proc/<pid>/cmdline 以 NUL 分隔，就是精确的参数列表。"""
+    result = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(os.path.join("/proc", entry, "cmdline"), "rb") as handle:
+                raw = handle.read()
+        except OSError:
+            continue
+        argv = [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
+        if argv:
+            result.append(argv)
+    return result
+
+
+def _ps_argv() -> List[List[str]]:
+    """macOS 等：`ps -axww -o command=` 列出全部进程（含其它用户的，能看到 root 属主的 Clash 内核参数）。"""
+    try:
+        proc = subprocess.run(["ps", "-axww", "-o", "command="], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL, timeout=30)
+    except subprocess.TimeoutExpired:
+        raise OSError("ps did not list processes within 30 seconds")
+    if proc.returncode != 0:
+        raise OSError("ps exited with code {}".format(proc.returncode))
+    lines = proc.stdout.decode("utf-8", "replace").splitlines()
+    return [argv for argv in (split_ps_command(line) for line in lines) if argv]
+
+
+def split_ps_command(line: str) -> List[str]:
+    """把 ps 的一行命令拆成参数。ps 输出不带引号，含空格的路径（如 /Library/Application Support/…）无法准确还原，
+    按约定近似：第一个以 `-` 开头的片段之前整段是程序；之后不以 `-` 开头的连续片段并回前一个值。
+    例：`/a b/mihomo -d /x y -ext-ctl-unix /s.sock` → [`/a b/mihomo`, `-d`, `/x y`, `-ext-ctl-unix`, `/s.sock`]。
+    拆错只会让候选地址不对，候选都要实际连一次验证，不会写错配置。
+    """
+    tokens = line.strip().split(" ")
+    if not tokens or not tokens[0]:
+        return []
+    first_flag = next((index for index, token in enumerate(tokens) if index and token.startswith("-")), len(tokens))
+    argv = [" ".join(tokens[:first_flag])]
+    for token in tokens[first_flag:]:
+        if not token and argv[-1].startswith("-"):
+            continue  # 参数名后多出的空格不算进值；值内部的连续空格（路径里的双空格）照常保留
+        if token.startswith("-") or argv[-1].startswith("-"):
+            argv.append(token)
+        else:
+            argv[-1] += " " + token
+    return argv
+
+
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _ERROR_INVALID_PARAMETER = 87
 _STILL_ACTIVE = 259
