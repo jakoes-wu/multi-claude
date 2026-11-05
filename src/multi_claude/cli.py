@@ -415,6 +415,8 @@ def build_parser() -> argparse.ArgumentParser:
                            help="show every field, the global settings and the keychain details")
     list_mode.add_argument("--json", action="store_true", help="print machine-readable JSON (includes usage)")
     list_mode.add_argument("--names", action="store_true", help="print only the account names, one per line")
+    # 隐藏入口：补全脚本在 --shared-exclude / --shared-include 之后调用它取共享项名（方案 feature-completion-values）。
+    list_mode.add_argument("--shared-items", action="store_true", help=argparse.SUPPRESS)
     p_list.add_argument("--no-refresh", action="store_true",
                         help="do not renew an expired access token (never write to the login); "
                              "such accounts show 'token expired'")
@@ -726,7 +728,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         # list 与 usage 只读：不加写锁，迁移未完成时也放行。
         if args.command == "list":
             return cmd_list(verbose=args.verbose, as_json=args.json, names_only=args.names, offline=args.offline,
-                            refresh_tokens=not args.no_refresh)
+                            refresh_tokens=not args.no_refresh, shared_items_only=args.shared_items)
         if args.command == "usage":
             if args.history:
                 return cmd_usage_history(args.name, args.days, args.by or "day", args.json)
@@ -1969,9 +1971,23 @@ def _checked_renews(value: str) -> str:
 
 
 def cmd_list(verbose: bool = False, as_json: bool = False, names_only: bool = False, offline: bool = False,
-             refresh_tokens: bool = True) -> int:
+             refresh_tokens: bool = True, shared_items_only: bool = False) -> int:
     """列出账号。除 --names 与 --offline 外，会读各账号的访问令牌并向服务端查询套餐（方案 feature-live-plan）；
-    访问令牌过期时先刷新并写回凭据，refresh_tokens 为假时不刷新（方案 feature-token-refresh）。"""
+    访问令牌过期时先刷新并写回凭据，refresh_tokens 为假时不刷新（方案 feature-token-refresh）。
+
+    shared_items_only 对应隐藏选项 --shared-items，只给补全脚本用：每行一个共享项名，没有配置文件时
+    输出默认共享项；配置读不了时输出空并退出 0，不在用户按 Tab 时打出错误。"""
+    if shared_items_only:
+        try:
+            items = load_config()[0].shared_items
+        except (ConfigError, OSError):
+            items = []
+        for item in items:
+            # 补全脚本会把这些名字交给 compgen -W 或写进 zsh 数组，含 $、反引号、空白等字符的名字
+            # 可能被展开或拆开，所以按补全模块同一份白名单过滤，过滤掉的位置退回“不补”。
+            if completion.SAFE_WORD.match(item):
+                print(item)
+        return accounts.EXIT_OK
     config, exists = load_config()
     if names_only:
         # 给补全脚本用：只输出名称，不输出任何告警。

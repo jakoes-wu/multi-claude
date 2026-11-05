@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Shell completion now completes option and argument values in bash, zsh, fish and PowerShell: `on`/`off`
+  after `netcheck --clash`, `--clash-tun` and `--clash-global`, `day`/`model` after `usage --by`, and the
+  configured shared item names after `--shared-exclude` and `--shared-include`. Values declared as argparse
+  `choices` are read when the script is generated, so new commands get them without changes to the
+  completion code. Completion scripts are saved copies: run the install command again after upgrading.
+
 ## [0.17.0] - 2026-11-05
 
 ### Added

@@ -497,6 +497,34 @@ class WindowsCliTest(CliTestCase):
                              stdout=subprocess.PIPE, universal_newlines=True, **TEXT_KWARGS).stdout.strip()
         self.assertEqual(out, "0", script)
 
+    def test_powershell_completion_values(self):
+        # 方案 feature-completion-values §8 PowerShell：用 TabExpansion2 驱动补全器；补全器里调用的
+        # multi-claude 由 fakebin 里的 .cmd 转到当前源码。
+        self.write(os.path.join(self.fakebin, "multi-claude.cmd"),
+                   '@"{}" -m multi_claude %*\r\n'.format(sys.executable))
+        self.ok("add", "work")
+        script = self.write(os.path.join(self.tmp, "completion.ps1"), self.ok("completion", "powershell").out)
+        lines = ["multi-claude proxy work ", "multi-claude netcheck work strict --clash ",
+                 "multi-claude usage --history --by ", "multi-claude set work --shared-exclude ",
+                 "multi-claude completion ", "multi-claude netcheck work --country "]
+        command = ("Invoke-Expression ([IO.File]::ReadAllText('{}')); foreach ($line in @({})) {{ "
+                   "$m = (TabExpansion2 -inputScript $line -cursorColumn $line.Length).CompletionMatches; "
+                   "'==' + (($m | ForEach-Object {{ $_.CompletionText }}) -join ' ') }}").format(
+                       script.replace("'", "''"), ", ".join("'{}'".format(line) for line in lines))
+        proc = subprocess.run([platform.system_program("powershell.exe"), "-NoProfile", "-Command", command],
+                              env=self._merged(None), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              universal_newlines=True, **TEXT_KWARGS)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        results = [line[2:].split() for line in proc.stdout.splitlines() if line.startswith("==")]
+        # 第一条先证明补全器确实被调到，后面几条的结果才有意义。
+        self.assertEqual(results[0], ["off", "inherit"], proc.stdout + proc.stderr)
+        self.assertEqual(results[1], ["on", "off"])
+        self.assertEqual(results[2], ["day", "model"])
+        self.assertEqual(results[3], ["agents", "commands", "skills", "CLAUDE.md"])
+        self.assertEqual(results[4], list(completion.SHELLS))
+        # 自由取值的选项不补：补全器返回空，PowerShell 退回补文件名，所以只核不出现取值表里的词。
+        self.assertFalse({"on", "off", "day", "model"} & set(results[5]))
+
 
 if __name__ == "__main__":
     unittest.main()

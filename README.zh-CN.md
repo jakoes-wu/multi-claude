@@ -514,6 +514,8 @@ multi-claude completion fish > ~/.config/fish/completions/multi-claude.fish
 multi-claude completion powershell | Add-Content $PROFILE         # Windows PowerShell
 ```
 
+补全覆盖子命令、选项、账号名，以及选项和参数的取值（例如 `netcheck` 的档位、`--clash` 之后的 `on`/`off`、`--shared-exclude` 之后的共享项名）。上面每条命令保存的是脚本的一份副本，升级后要重新执行一次（PowerShell 先从 `$PROFILE` 里删掉之前追加的那段）。
+
 ## 迁移 `~/.claude`
 
 默认账号由三部分组成，Claude Code 只有在**未设置** `CLAUDE_CONFIG_DIR` 时才会找到它们：目录 `~/.claude`、文件 `~/.claude.json`，以及（macOS 上）钥匙串条目 `Claude Code-credentials`。macOS 上其它账号的钥匙串条目与 `CLAUDE_CONFIG_DIR` 的路径字符串一一对应，所以不能简单地让默认账号改用新路径。
