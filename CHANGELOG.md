@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-05
+
 ### Added
 
 - `multi-claude completion --install [SHELL]` and `--uninstall [SHELL]` add or remove a marked block in
@@ -440,7 +442,8 @@ First release (macOS and Linux).
   program (`.../@anthropic-ai/claude-code/bin/claude.exe`) and the Linux
   systemd user service of the background supervisor.
 
-[Unreleased]: https://github.com/jakoes-wu/multi-claude/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/jakoes-wu/multi-claude/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/jakoes-wu/multi-claude/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/jakoes-wu/multi-claude/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/jakoes-wu/multi-claude/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/jakoes-wu/multi-claude/compare/v0.15.0...v0.16.0
