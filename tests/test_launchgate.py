@@ -331,7 +331,8 @@ class ChecksTest(unittest.TestCase):
         os.environ["HTTPS_PROXY"] = proxy.url
         (result,) = self.results("inherit", "basic")
         self.assertTrue(result.ok, result)
-        self.assertIn("from HTTPS_PROXY (shell)", result.detail)
+        # Windows 的环境变量名不分大小写，按小写名也能查到大写的 HTTPS_PROXY，显示的变量名随之是小写。
+        self.assertIn("from https_proxy (shell)", result.detail.lower())
 
     def test_settings_override_launcher_proxy(self):
         """R-B2：settings.json 的 env 覆盖启动命令代理 → 查 settings 的端口，文案标 settings.json。"""
@@ -1076,7 +1077,7 @@ class GateTest(LaunchGateCliBase):
         code, _, _, err = self.launch(env={"HTTPS_PROXY": self.proxy.url, "https_proxy": self.proxy.url})
         self.assertEqual(code, 0, err)
         result = self.run_cli("netcheck", "work", env={"HTTPS_PROXY": self.proxy.url})
-        self.assertIn("from HTTPS_PROXY (shell)", result.out)
+        self.assertIn("from https_proxy (shell)", result.out.lower())  # 大小写原因同 test_inherit_uses_shell_proxy
         self.dead_proxy()
         settings = os.path.join(self.root, "work", "settings.json")
         self.write(settings, json.dumps({"env": {"https_proxy": self.proxy.url, "HTTPS_PROXY": self.proxy.url}}))
