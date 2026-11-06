@@ -26,12 +26,15 @@ POSITIONAL_KINDS = {
     "run": ["name"], "path": ["name"], "restore": ["name"], "code": ["name", "file"],
     "export": ["name", "file"], "import": ["file", "name"], "sessions": ["name"], "artifacts": ["name"],
     "netcheck": ["name", "fixed"], "clash-api": ["fixed"],
+    "agent-lock": ["lock"],
 }
+# fish 按 kind 读这张表。bash 与 zsh 的 kind 分支是手写的，不读它。
+FIXED_WORDS = {"lock": ("on", "off")}
 # argparse 里没有 choices 的固定取值：proxy 的值还可以是端口或 URL，clash-api 的地址还可以是任意地址，
 # 所以不能写成 choices，只在补全时给出这几个关键字。同一位置 argparse 有 choices 时以 argparse 为准。
 EXTRA_POSITIONAL = {("proxy", 1): ("off", "inherit"), ("clash-api", 0): ("auto", "off")}
 # 选项值是路径、应按文件补全的选项。
-PATH_OPTIONS = ("-f", "--file", "--root", "--bin-dir", "--shared-dir")
+PATH_OPTIONS = ("-f", "--file", "--root", "--bin-dir", "--shared-dir", "--wrapper")
 # 选项值是账号名的选项。
 NAME_OPTIONS = ("--default", "--from", "--config-from")
 # 选项值是共享项名的选项；候选在按 Tab 时调用 `multi-claude list --shared-items` 现查，
@@ -88,7 +91,11 @@ def value_spec(parser: argparse.ArgumentParser) -> ValueSpec:
                     if item.nargs in ("*", "+"):
                         # 位置计数假定每个位置参数只占一个词；可重复的位置后面的序号就对不上了。
                         raise ValueError("completion: {} positional {} takes several words".format(name, index))
-                    positional[(name, index)] = _checked_words("{} positional {}".format(name, index), item.choices)
+                    # FIXED_WORDS 的 kind 不从 argparse choices 生成：fish 读表，bash / zsh 用手写分支。
+                    marked = POSITIONAL_KINDS.get(name, ())
+                    if not (index < len(marked) and marked[index] in FIXED_WORDS):
+                        positional[(name, index)] = _checked_words(
+                            "{} positional {}".format(name, index), item.choices)
                 index += 1
     # 只合并解析器里真有的子命令：测试会用只含几个子命令的假解析器调用本函数。
     for key, words in EXTRA_POSITIONAL.items():
@@ -245,6 +252,7 @@ _multi_claude() {
     name) candidates="$(multi-claude list --names 2>/dev/null)" ;;
     dir) COMPREPLY=($(compgen -d -- "$cur")); return 0 ;;
     file) COMPREPLY=($(compgen -f -- "$cur")); return 0 ;;
+    lock) candidates="on off" ;;
   esac
   COMPREPLY=($(compgen -W "$candidates" -- "$cur"))
   # bash 只替换当前词最后一个分词字符之后的片段，候选要去掉同样长的前缀。
@@ -321,6 +329,7 @@ _multi_claude() {
     name) candidates=(${(f)"$(multi-claude list --names 2>/dev/null)"}) ;;
     dir) _files -/; return ;;
     file) _files; return ;;
+    lock) candidates=(on off) ;;
   esac
   compadd -- $candidates
 }
@@ -405,6 +414,8 @@ def _fish(specs: Dict[str, CommandSpec], values: ValueSpec) -> str:
                 source = "'(__fish_complete_directories)'"
             elif kind == "file":
                 source = "'(__fish_complete_path)'"
+            elif kind in FIXED_WORDS:
+                source = shlex.quote(_words(list(FIXED_WORDS[kind])))
             else:
                 source = shlex.quote(_words(values.positional[(name, index)]))
             lines.append("complete -c multi-claude -n {} -a {}".format(at_position, source))

@@ -23,6 +23,9 @@ SHELL_OPERATORS = (">", ">>", "|", "<")
 # E3：这两个命令的 --verbose 是自己的功能；其余命令的 --verbose 来自 _add_write_options，是公共写选项，不要求示例覆盖。
 OWN_VERBOSE = ("list", "doctor")
 
+# agent-lock 的帮助不以 Examples: 结尾，也不造逐命令示例表。
+NO_EXAMPLES = {"agent-lock"}
+
 # E5 跳过的命令及理由（方案 §8.1 第 5 条）；它们的示例仍由 E2 解析核对。
 RUN_SKIPPED = {
     "list": "looks up plans over the network; its examples are parsed by test_renewal T8",
@@ -101,13 +104,20 @@ def parse_like_main(words):
 class HelpExamplesTest(unittest.TestCase):
     def test_e1_every_subcommand_has_examples(self):
         names = list(subparsers())
-        self.assertEqual(len(names), 30)
+        self.assertEqual(len(names), 31)
         for name in names:
             with self.subTest(command=name):
-                self.assertTrue(example_commands(help_text(name)))
+                text = help_text(name)
+                if name in NO_EXAMPLES:
+                    self.assertNotIn("Examples:", text)
+                    self.assertFalse(text.rstrip().lower().endswith("examples:"))
+                    continue
+                self.assertTrue(example_commands(text))
 
     def test_e2_examples_parse_like_main(self):
         for name in subparsers():
+            if name in NO_EXAMPLES:
+                continue
             for command in example_commands(help_text(name)):
                 with self.subTest(command=command):
                     args = parse_like_main(example_words(command))
@@ -117,6 +127,8 @@ class HelpExamplesTest(unittest.TestCase):
 
     def test_e3_examples_cover_every_option_and_choice(self):
         for name, parser in subparsers().items():
+            if name in NO_EXAMPLES:
+                continue
             with self.subTest(command=name):
                 # 按整词比较：子串匹配会让 --shared-exclude 冒充 --shared 已覆盖。
                 used = {word for command in example_commands(help_text(name)) for word in example_words(command)}
@@ -136,6 +148,8 @@ class HelpExamplesTest(unittest.TestCase):
 
     def test_e4_descriptions_and_example_columns(self):
         for name, parser in subparsers().items():
+            if name in NO_EXAMPLES:
+                continue
             with self.subTest(command=name):
                 for line in (parser.description or "").splitlines():
                     self.assertLessEqual(len(line), 80)
@@ -234,7 +248,7 @@ class HelpExamplesRunTest(CliTestCase):
 
 # 每个子命令一个测试方法，各自一个新沙箱：前一个命令的示例不会改掉后一个命令依赖的账号与文件。
 for _name in subparsers():
-    if _name not in RUN_SKIPPED:
+    if _name not in RUN_SKIPPED and _name not in NO_EXAMPLES:
         setattr(HelpExamplesRunTest, "test_e5_" + _name.replace("-", "_"),
                 lambda self, name=_name: self.check_examples_run(name))
 

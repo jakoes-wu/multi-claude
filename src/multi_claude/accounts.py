@@ -60,7 +60,7 @@ def render_launcher(config: Config, account: Account) -> str:
         return launcher.render_windows(account.name, account_dir(config, account.name), python, entry)
     return launcher.render(account.name, account.identity, account_dir(config, account.name), default_dir(),
                            account.proxy, config.effective_env(account), config.effective_args(account),
-                           net_check=account.net_check.active)
+                           net_check=account.net_check.active, agent_lock=config.agent_lock)
 
 
 def plan(old: Config, new: Config, *, config_exists: bool = True,

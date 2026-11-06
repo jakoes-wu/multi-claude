@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- `multi-claude agent-lock` is off unless turned on: launchers stay unchanged until `multi-claude agent-lock on`. The firewall is the separate agent-lock tool; `agent-lock install` writes Claude's process wrapper, not this command.
+
 ## [0.19.0] - 2026-11-05
 
 ### Added

@@ -130,7 +130,8 @@ class Config(object):
     def __init__(self, root: str, bin_dir: str, shared_dir: Optional[str], shared_items: List[str],
                  accounts: Dict[str, Account], defaults_env: Optional[Dict[str, str]] = None,
                  defaults_args: Optional[List[str]] = None, route_rules: Optional[List[RouteRule]] = None,
-                 route_default: Optional[str] = None, clash_api: Optional["ClashApi"] = None) -> None:
+                 route_default: Optional[str] = None, clash_api: Optional["ClashApi"] = None,
+                 agent_lock: Optional[str] = None) -> None:
         self.root = root
         self.bin_dir = bin_dir
         self.shared_dir = shared_dir
@@ -145,6 +146,8 @@ class Config(object):
         self.route_default = route_default
         # Clash / mihomo 外部控制接口；本机状态，None 表示未设置。
         self.clash_api = clash_api
+        # 打开时是切换器的绝对路径；None 表示关闭，不写进配置。
+        self.agent_lock = agent_lock
 
     @property
     def routes_enabled(self) -> bool:
@@ -182,7 +185,7 @@ class Config(object):
         return Config(self.root, self.bin_dir, self.shared_dir, self.shared_items,
                       {key: value.copy() for key, value in self.accounts.items()},
                       dict(self.defaults_env), list(self.defaults_args), list(self.route_rules), self.route_default,
-                      self.clash_api)
+                      self.clash_api, self.agent_lock)
 
     def to_dict(self) -> dict:
         data = {
@@ -198,6 +201,9 @@ class Config(object):
         # 只在设置过时写出：没用这项功能的配置内容不变。
         if self.clash_api is not None:
             data["clash_api"] = self.clash_api.to_dict()
+        # 只在开启时写出。关闭不写 enabled: false，缺键即关。
+        if self.agent_lock:
+            data["agent_lock"] = {"enabled": True, "wrapper": self.agent_lock}
         return data
 
 
@@ -294,8 +300,9 @@ def parse_config(raw: str, source: str) -> Config:
     _check_dirs(accounts, source)
     route_rules, route_default = _parse_routes(data.get("routes", {}), source)
     clash_api = _parse_clash_api(data.get("clash_api"), source)
+    agent_lock = _parse_agent_lock(data.get("agent_lock"), source)
     return Config(root, bin_dir, shared_dir, shared_items, accounts, defaults_env, defaults_args,
-                  route_rules, route_default, clash_api)
+                  route_rules, route_default, clash_api, agent_lock)
 
 
 def _check_dirs(accounts: Dict[str, Account], source: str) -> None:
@@ -697,6 +704,30 @@ def _parse_net_check(value: object, where: str) -> NetCheck:
     if not isinstance(clash, bool):
         raise ConfigError("{}: 'net_check.clash' must be true or false".format(where))
     return NetCheck(level, country, clash, clash)
+
+
+def is_absolute_wrapper(path: str) -> bool:
+    """切换器路径。POSIX 绝对路径以 / 开头；Windows 上仍接受这种写法，否则带该键的配置无法读取、也无法关掉。"""
+    if not path or "\n" in path or "\r" in path or "\0" in path:
+        return False
+    return os.path.isabs(path) or path.startswith("/")
+
+
+def _parse_agent_lock(value: object, source: str) -> Optional[str]:
+    """缺键、或 enabled 不为真，都是关，返回 None（写回时不出现这个键）。开启时返回切换器绝对路径。"""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ConfigError("{}: 'agent_lock' must be an object".format(source))
+    enabled = value.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ConfigError("{}: 'agent_lock.enabled' must be true or false".format(source))
+    if not enabled:
+        return None
+    wrapper = value.get("wrapper")
+    if not isinstance(wrapper, str) or not is_absolute_wrapper(wrapper):
+        raise ConfigError("{}: 'agent_lock.wrapper' must be an absolute path".format(source))
+    return wrapper
 
 
 def _parse_clash_api(value: object, source: str) -> Optional[ClashApi]:

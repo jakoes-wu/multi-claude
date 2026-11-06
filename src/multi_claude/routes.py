@@ -123,6 +123,10 @@ def render_router(config: Config) -> str:
             "  target={}".format(shlex.quote(_target_launcher(config, config.route_default))),
             "fi",
         ])
+    # 没有命中时才直接运行 claude。开启 agent_lock 时这一支改走切换器；账户分支仍是 exec "$target"。
+    direct = 'exec claude "$@"'
+    if config.agent_lock:
+        direct = "exec {} claude \"$@\"".format(shlex.quote(config.agent_lock))
     lines.extend([
         'if [ -n "$target" ]; then',
         # 绝对路径调用账号启动命令，不经 PATH 查找，避免被同名文件遮住。
@@ -132,7 +136,7 @@ def render_router(config: Config) -> str:
         '  echo "multi-claude: claude not found in PATH" >&2',
         "  exit 127",
         "fi",
-        'exec claude "$@"',
+        direct,
         "",
     ])
     return "\n".join(lines)
