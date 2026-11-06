@@ -15,7 +15,7 @@ from multi_claude import cli, completion  # noqa: E402
 
 SUBCOMMANDS = ("init", "migrate-default", "add", "proxy", "env", "args", "remove", "apply", "list",
                "usage", "doctor", "route", "which", "rename", "mcp", "completion", "statusline", "handoff", "login", "set",
-               "sessions", "artifacts")
+               "sessions", "artifacts", "agent-lock")
 
 
 class CompletionTest(CliTestCase):
@@ -217,6 +217,31 @@ class CompletionTest(CliTestCase):
         parser.add_subparsers(dest="command").add_parser("remove").add_argument("name", choices=("a",))
         with self.assertRaises(ValueError):
             completion.value_spec(parser)
+
+    def test_agent_lock_completion(self):
+        # 位置参数 on/off 不从 argparse choices 生成。fish 读 FIXED_WORDS；bash / zsh 用手写分支。
+        spec = completion.value_spec(cli.build_parser())
+        self.assertEqual(spec.kinds["agent-lock"], ["lock"])
+        self.assertNotIn(("agent-lock", 0), spec.positional)
+        self.assertEqual(completion.FIXED_WORDS["lock"], ("on", "off"))
+        self.assertNotIn("statusline", completion.FIXED_WORDS)
+        self.assertEqual(completion.PATH_OPTIONS,
+                         ("-f", "--file", "--root", "--bin-dir", "--shared-dir", "--wrapper"))
+        self.assertEqual(completion.SHELLS, ("bash", "zsh", "fish", "powershell"))
+        self.assertEqual(completion.POSITIONAL_KINDS["statusline"], ["fixed", "file"])
+        self.assertEqual(completion.POSITIONAL_KINDS["remove"], ["name"])
+        bash = completion.render("bash", cli.build_parser())
+        zsh = completion.render("zsh", cli.build_parser())
+        fish = completion.render("fish", cli.build_parser())
+        self.assertIn('lock) candidates="on off" ;;', bash)
+        self.assertIn("lock) candidates=(on off) ;;", zsh)
+        self.assertIn("on off", fish)
+        powershell = completion.render("powershell", cli.build_parser())
+        self.assertNotIn("agent-lock:0", powershell)
+        if shutil.which("bash"):
+            self.assertEqual(self.bash_complete("multi-claude agent-lock "), ["on", "off"])
+        if shutil.which("zsh"):
+            self.assertEqual(self.zsh_complete("multi-claude agent-lock "), ["on", "off"])
 
     def test_value_spec_matches_cli(self):
         # C6：从 argparse 读出的取值与原手写表一致（词与顺序都不变）。

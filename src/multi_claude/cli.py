@@ -26,8 +26,8 @@ from . import (__version__, accounts, artifacts, bundle, completion, doctor, his
 from .actions import LOG_PREFIX, error, info, warn
 from .config import (DEFAULT_SHARED_DIR, DEFAULT_SHARED_ITEMS, IDENTITY_DEFAULT, IDENTITY_DIR, NET_CHECK_LEVELS,
                      NETCHECK_SKIP_ENV, Account, ClashApi, Config, ConfigError, RouteRule, normalize_clash_address,
-                     normalize_country, is_unshareable, load_config, normalize_proxy, parse_config, validate_env_key, validate_name,
-                     validate_renews, validate_route_path, validate_value, config_path)
+                     normalize_country, is_absolute_wrapper, is_unshareable, load_config, normalize_proxy, parse_config,
+                     validate_env_key, validate_name, validate_renews, validate_route_path, validate_value, config_path)
 from .env import account_env
 from .fsutil import KIND_FILE, KIND_LINK, KIND_MISSING, atomic_write, entry_kind, expand, read_text
 from .lock import LockBusyError, WriteLock
@@ -70,6 +70,7 @@ COMMAND_GROUPS = [
         ("init, apply", "global settings; converge everything to config.json"),
         ("doctor", "check the setup and suggest fixes"),
         ("clash-api", "set the Clash / mihomo controller used by the network check"),
+        ("agent-lock", "turn launchers on or off"),
         ("statusline", "record usage from the status line"),
         ("completion", "print a shell completion script"),
     ]),
@@ -451,6 +452,13 @@ def build_parser() -> argparse.ArgumentParser:
                               "secret is cleared")
     _add_write_options(p_clash)
 
+    p_lock = sub.add_parser("agent-lock", description="turn launchers on or off")
+    p_lock.add_argument("action", nargs="?", choices=("on", "off"),
+                        help="on rewrites launchers to switch accounts; off rewrites them back "
+                             "(omit to show the current setting)")
+    p_lock.add_argument("--wrapper", metavar="PATH",
+                        help="absolute path of the agent-lock switcher (default /usr/local/sbin/agent-lock)")
+
     p_route = sub.add_parser("route", description="choose an account by directory for claude-auto: route DIR NAME, "
                                            "route DIR --remove, route --default NAME, route --no-default")
     p_route.add_argument("path", nargs="?", metavar="DIR")
@@ -797,6 +805,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             if args.secret_stdin:
                 raise UsageError("--secret-stdin needs an ADDRESS")
             return cmd_clash_api_show()
+        if args.command == "agent-lock" and args.action is None:
+            if args.wrapper is not None:
+                raise UsageError("--wrapper is only used with `agent-lock on`")
+            return cmd_agent_lock_show()
         if _blocked_by_migration(args, notice):
             return accounts.EXIT_ERROR
         found = _prepare_clash_find(args)
@@ -973,6 +985,10 @@ def dispatch(args: argparse.Namespace) -> int:
         _apply_netcheck_changes(new, account, args)
     elif args.command == "clash-api":
         new.clash_api = _clash_api_from_args(args)
+    elif args.command == "agent-lock":
+        failed = _apply_agent_lock(args, new)
+        if failed is not None:
+            return failed
     elif args.command == "env":
         target, assignments = _env_target(args)
         env = new.defaults_env if target is None else _registered(new, target).env
@@ -1015,8 +1031,10 @@ def dispatch(args: argparse.Namespace) -> int:
             new = _load_apply_file(args.file, old)
         warn_names = None
 
-    code = accounts.converge(old, new, config_exists=exists, dry_run=args.dry_run, verbose=args.verbose,
-                             orphan_scope=orphan_scope, adopt_accounts=adopt_accounts)
+    # agent-lock 不带 --dry-run / --verbose。其它会走到这里的写命令都有这两项。
+    code = accounts.converge(old, new, config_exists=exists, dry_run=getattr(args, "dry_run", False),
+                             verbose=getattr(args, "verbose", False), orphan_scope=orphan_scope,
+                             adopt_accounts=adopt_accounts)
     if code == accounts.EXIT_OK and renamed is not None and not args.dry_run:
         info("renamed {} to {} (directory {} unchanged)".format(
             renamed[0], renamed[1], accounts.account_dir(new, renamed[1])))
@@ -1507,6 +1525,114 @@ def cmd_netcheck_show(name: str) -> int:
     return accounts.EXIT_OK if all(result.ok for result in results) else accounts.EXIT_NETCHECK
 
 
+# 切换器默认路径。Claude 包装脚本是另一条路径，由 agent-lock install 写入 settings，本命令不写。
+_DEFAULT_SWITCHER = "/usr/local/sbin/agent-lock"
+_DEFAULT_CLAUDE_WRAPPER = "/usr/local/sbin/agent-lock-claude"
+_PROCESS_WRAPPER_ENV = "CLAUDE_CODE_PROCESS_WRAPPER"
+
+
+def cmd_agent_lock_show() -> int:
+    """打印开关与切换器路径。不探测网络，不改配置，不改启动命令。"""
+    config, _exists = load_config()
+    if config.agent_lock:
+        print("enabled: yes")
+        print("wrapper: {}".format(config.agent_lock))
+    else:
+        print("enabled: no")
+    return accounts.EXIT_OK
+
+
+def _agent_lock_state_path() -> str:
+    """~/.config/agent-lock/state.json；尊重 XDG_CONFIG_HOME（须为绝对路径，与本工具的状态目录同一规则）。"""
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    base = xdg if xdg and os.path.isabs(xdg) else os.path.expanduser("~/.config")
+    return os.path.join(base, "agent-lock", "state.json")
+
+
+def _expected_claude_wrapper() -> str:
+    """state.json 里有 claude_wrapper 时用它，否则用安装默认的 Claude 包装脚本。"""
+    path = _agent_lock_state_path()
+    if not os.path.isfile(path):
+        return _DEFAULT_CLAUDE_WRAPPER
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return _DEFAULT_CLAUDE_WRAPPER
+    wrapper = data.get("claude_wrapper") if isinstance(data, dict) else None
+    if isinstance(wrapper, str) and is_absolute_wrapper(wrapper):
+        return wrapper
+    return _DEFAULT_CLAUDE_WRAPPER
+
+
+def _user_claude_settings_path() -> str:
+    return os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
+
+
+def _settings_process_wrapper(path: str) -> Optional[str]:
+    """用户级 settings.json 的 env.CLAUDE_CODE_PROCESS_WRAPPER。读不到或没有该键时返回 None。不写文件。"""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    env = data.get("env") if isinstance(data, dict) else None
+    value = env.get(_PROCESS_WRAPPER_ENV) if isinstance(env, dict) else None
+    return value if isinstance(value, str) else None
+
+
+def _agentnet_exists() -> bool:
+    """`id agentnet` 成功才说明专用账户在。失败或找不到 id 都视为没有。"""
+    try:
+        result = subprocess.run(["id", "agentnet"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
+def _switcher_path(value: Optional[str]) -> str:
+    if value is None:
+        return _DEFAULT_SWITCHER
+    path = os.path.expanduser(value)
+    if not is_absolute_wrapper(path):
+        raise UsageError("--wrapper must be an absolute path")
+    return path
+
+
+def _agent_lock_blocked(wrapper: str) -> Optional[str]:
+    """on 的前提。任一不满足就返回错误文字，调用方不改配置、不重写启动命令。"""
+    settings = _user_claude_settings_path()
+    expected = _expected_claude_wrapper()
+    if _settings_process_wrapper(settings) != expected:
+        return ("{} in {} must already be {}; run `agent-lock install` first".format(
+            _PROCESS_WRAPPER_ENV, settings, expected))
+    if not (os.path.isfile(wrapper) and os.access(wrapper, os.X_OK)):
+        return "switcher {} is missing or not executable".format(wrapper)
+    if not _agentnet_exists():
+        return "user agentnet does not exist; run `agent-lock install` first"
+    return None
+
+
+def _apply_agent_lock(args: argparse.Namespace, new: Config) -> Optional[int]:
+    """on 写入切换器路径并交给收敛重写启动命令；off 删掉字段再重写回去。不写 settings，不改账号 env。"""
+    if args.action == "off":
+        if args.wrapper is not None:
+            raise UsageError("--wrapper is only used with `agent-lock on`")
+        new.agent_lock = None
+        return None
+    if platform.IS_WINDOWS:
+        # Windows 上不写启动器，也不把进程包装变量说成有效。
+        error("agent-lock launchers are only supported on macOS and Linux")
+        return accounts.EXIT_ERROR
+    wrapper = _switcher_path(args.wrapper)
+    blocked = _agent_lock_blocked(wrapper)
+    if blocked is not None:
+        error(blocked)
+        return accounts.EXIT_ERROR
+    new.agent_lock = wrapper
+    return None
+
+
 def cmd_clash_api_show() -> int:
     """`clash-api`：显示 Clash 接口设置；secret 只说有没有设置，不显示内容。"""
     config, _ = load_config()
@@ -1945,22 +2071,33 @@ def _load_apply_file(path: str, old: Config) -> Config:
             raw = handle.read()
     except OSError as exc:
         raise ConfigError("cannot read {}: {}".format(path, exc))
-    # Clash 接口地址与 secret 是本机状态（各机器的 Clash 配置不同）：先从原始 JSON 里拿掉再校验，
-    # 否则文件里另一个平台的地址（如在 macOS 上写了 \\.\pipe\…）会让整个 apply 校验失败。
+    # clash_api 与 agent_lock 都是本机状态：先从原始 JSON 里拿掉再校验。
+    # 文件里另一个平台的 clash 地址会让整个 apply 失败；agent_lock 的路径也不能从别的机器套用。
+    # 文件没有这个键不会把已经打开的开关关掉。
     clash_written = False
+    agent_lock_written = False
     try:
         document = json.loads(raw)
     except ValueError:
         document = None  # 不是合法 JSON，交给 parse_config 给出统一的报错
-    if isinstance(document, dict) and "clash_api" in document:
-        clash_written = True
-        del document["clash_api"]
-        raw = json.dumps(document)
+    if isinstance(document, dict):
+        if "clash_api" in document:
+            clash_written = True
+            del document["clash_api"]
+        if "agent_lock" in document:
+            agent_lock_written = True
+            del document["agent_lock"]
+        if clash_written or agent_lock_written:
+            raw = json.dumps(document)
     new = parse_config(raw, path)
     if clash_written:
         warn("'clash_api' in {} is ignored; it is a setting of this machine, change it with "
              "`multi-claude clash-api`".format(path))
+    if agent_lock_written:
+        warn("'agent_lock' in {} is ignored; it is a setting of this machine, change it with "
+             "`multi-claude agent-lock on` or `multi-claude agent-lock off`".format(path))
     new.clash_api = old.clash_api
+    new.agent_lock = old.agent_lock
     skipped = set()
     for name, account in list(new.accounts.items()):
         current = old.find(account.name)

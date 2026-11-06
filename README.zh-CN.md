@@ -34,7 +34,7 @@ claude-main       -> 原来的 ~/.claude 账号，登录不失效
 claude            -> 行为不变
 ```
 
-启动命令是普通的 shell 脚本，即使卸载了 multi-claude 也能继续使用。
+启动命令是普通的 shell 脚本，即使卸载了 multi-claude 也能继续使用。默认不会改成走 agent-lock：只有运行 `multi-claude agent-lock on` 之后，启动命令才会被重写。防火墙是单独的 agent-lock 工具；Claude 的进程包装由 `agent-lock install` 写入，不是这条命令写的。
 
 ## 功能
 
@@ -596,7 +596,7 @@ multi-claude remove main         # 注销账号
 
 ### 命令
 
-每个命令的 `--help` 末尾都列有可直接照抄的示例，覆盖该命令的选项，例如 `multi-claude route --help`。
+每个命令的 `--help` 末尾都列有可直接照抄的示例，覆盖该命令的选项，例如 `multi-claude route --help`。`agent-lock` 只说明开关，帮助不以示例结尾。
 
 | 命令 | 作用 |
 | ---- | ---- |
@@ -610,6 +610,7 @@ multi-claude remove main         # 注销账号
 | `multi-claude proxy 名称 端口\|URL\|off\|inherit` | 设置账号代理 |
 | `multi-claude netcheck 名称 [off\|basic\|strict] [--country 国家代码] [--clash on\|off] [--clash-tun on\|off] [--clash-global on\|off]` | 设置账号的[启动前网络检查](#启动前网络检查)；只给名称时显示设置并立即检查 |
 | `multi-claude clash-api [地址\|auto\|off] [--secret-stdin]` | 显示或设置 `netcheck` 的 Clash 检查所用的 Clash / mihomo 控制接口；`auto` 自动查找正在运行的那个 |
+| `multi-claude agent-lock [on\|off] [--wrapper 路径]` | 打开或关闭经 agent-lock 切换账户再启动。默认关闭，启动命令保持原样，直到 `on`。防火墙是单独的 agent-lock 工具；进程包装由 `agent-lock install` 写入，不是这条命令 |
 | `multi-claude env (名称 \| --defaults) [K=V ...] [--unset K ...]` | 设置或删除额外环境变量 |
 | `multi-claude args (名称 \| --defaults) -- [参数 ...]` | 整体替换固定参数；`--` 后面为空表示清空 |
 | `multi-claude remove 名称` | 注销账号并删除其启动命令。**账号目录和登录都会保留** |
